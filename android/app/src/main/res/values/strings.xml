@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">drs</string>
+    <string name="app_name">Desktop Remote</string>
+    <string name="accessibility_service_label">Desktop Remote Control</string>
+    <string name="accessibility_service_description">Lets an authorized operator in the Command Center control this device (taps, swipes, typing, and navigation) during an approved remote session.</string>
 </resources>

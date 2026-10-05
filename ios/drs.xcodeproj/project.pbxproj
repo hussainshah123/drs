@@ -9,20 +9,70 @@
 /* Begin PBXBuildFile section */
 		0C80B921A6F3F58F76C31292 /* libPods-drs.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-drs.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		276AB3274B75C4DE902697BA /* CoreImage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CF9433FEE6687BC9A0EBF1D9 /* CoreImage.framework */; };
+		300D88F2ED4CA0C9F13ABEEF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		5371B2FFFF476AF9178CBB19 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 15A1AB8F95861758F88DF722 /* CoreVideo.framework */; };
+		6F5C5521D46A9F5893C5AD77 /* CFNetwork.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7046E2DC2CDEC78F383380B6 /* CFNetwork.framework */; };
+		74145A1C3526C8B789F914A4 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1C62DA11C0C36C400DB8EEB5 /* Foundation.framework */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		B2CA88389DC2803C5FBC4420 /* DRSSocketConnection.m in Sources */ = {isa = PBXBuildFile; fileRef = BF5230BD22BE32BDB7FDA3F9 /* DRSSocketConnection.m */; };
+		C25E3A0F8AF6A2435543F42C /* ScreenShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 1E32D77F506C56998D67CEA4 /* ScreenShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D194D729E90129E6B1087A18 /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 330DE6057C4699488C469EFB /* ReplayKit.framework */; };
+		DCB159C8AF6AD6853914B083 /* SampleHandler.m in Sources */ = {isa = PBXBuildFile; fileRef = 2162E5B4B926A5CD5B69515B /* SampleHandler.m */; };
+		F73B5EA2CA11972B38545563 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7AB9B58E2EBC230BAC86014E /* CoreMedia.framework */; };
+		FA3586D6185B09D8D3BCFC75 /* DRSSampleUploader.m in Sources */ = {isa = PBXBuildFile; fileRef = 65E550CD302D53327B938CD9 /* DRSSampleUploader.m */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		82DC7B83CE82DAF80BED44C7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8AB7B19AEA2EF977554964F0;
+			remoteInfo = ScreenShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2A98ADA0D43374AB34BD039D /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C25E3A0F8AF6A2435543F42C /* ScreenShare.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* drs.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = drs.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = drs/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = drs/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = drs/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		15A1AB8F95861758F88DF722 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
+		1C62DA11C0C36C400DB8EEB5 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		1E32D77F506C56998D67CEA4 /* ScreenShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ScreenShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1E6644F521B1EBD6D37E2029 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		2162E5B4B926A5CD5B69515B /* SampleHandler.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = SampleHandler.m; sourceTree = "<group>"; };
+		2F6A1EE672A49249CFEC2EA8 /* DRSSocketConnection.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = DRSSocketConnection.h; sourceTree = "<group>"; };
+		330DE6057C4699488C469EFB /* ReplayKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ReplayKit.framework; path = System/Library/Frameworks/ReplayKit.framework; sourceTree = SDKROOT; };
 		3B4392A12AC88292D35C810B /* Pods-drs.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-drs.debug.xcconfig"; path = "Target Support Files/Pods-drs/Pods-drs.debug.xcconfig"; sourceTree = "<group>"; };
+		55E5411FCC65C0E645085A82 /* SampleHandler.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = SampleHandler.h; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-drs.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-drs.release.xcconfig"; path = "Target Support Files/Pods-drs/Pods-drs.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-drs.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-drs.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		65E550CD302D53327B938CD9 /* DRSSampleUploader.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = DRSSampleUploader.m; sourceTree = "<group>"; };
+		7046E2DC2CDEC78F383380B6 /* CFNetwork.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CFNetwork.framework; path = System/Library/Frameworks/CFNetwork.framework; sourceTree = SDKROOT; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = drs/AppDelegate.swift; sourceTree = "<group>"; };
+		7AB9B58E2EBC230BAC86014E /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+		7AD8A010C026AC5125999D72 /* DRSSampleUploader.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = DRSSampleUploader.h; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = drs/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A1B839D31786CA2DC691626B /* ScreenShare.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = ScreenShare.entitlements; sourceTree = "<group>"; };
+		BF5230BD22BE32BDB7FDA3F9 /* DRSSocketConnection.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = DRSSocketConnection.m; sourceTree = "<group>"; };
+		CF9433FEE6687BC9A0EBF1D9 /* CoreImage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreImage.framework; path = System/Library/Frameworks/CoreImage.framework; sourceTree = SDKROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -32,6 +82,19 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-drs.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		658D238EF9597B67CBACA24A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				74145A1C3526C8B789F914A4 /* Foundation.framework in Frameworks */,
+				D194D729E90129E6B1087A18 /* ReplayKit.framework in Frameworks */,
+				276AB3274B75C4DE902697BA /* CoreImage.framework in Frameworks */,
+				F73B5EA2CA11972B38545563 /* CoreMedia.framework in Frameworks */,
+				5371B2FFFF476AF9178CBB19 /* CoreVideo.framework in Frameworks */,
+				6F5C5521D46A9F5893C5AD77 /* CFNetwork.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -55,8 +118,22 @@
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-drs.a */,
+				73F0856B59151616328113BA /* iOS */,
+				330DE6057C4699488C469EFB /* ReplayKit.framework */,
+				CF9433FEE6687BC9A0EBF1D9 /* CoreImage.framework */,
+				7AB9B58E2EBC230BAC86014E /* CoreMedia.framework */,
+				15A1AB8F95861758F88DF722 /* CoreVideo.framework */,
+				7046E2DC2CDEC78F383380B6 /* CFNetwork.framework */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		73F0856B59151616328113BA /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				1C62DA11C0C36C400DB8EEB5 /* Foundation.framework */,
+			);
+			name = iOS;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -74,6 +151,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				8EE69AB81CE0F121EFD16AC9 /* ScreenShare */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -84,9 +162,26 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* drs.app */,
+				1E32D77F506C56998D67CEA4 /* ScreenShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
+		};
+		8EE69AB81CE0F121EFD16AC9 /* ScreenShare */ = {
+			isa = PBXGroup;
+			children = (
+				2162E5B4B926A5CD5B69515B /* SampleHandler.m */,
+				BF5230BD22BE32BDB7FDA3F9 /* DRSSocketConnection.m */,
+				65E550CD302D53327B938CD9 /* DRSSampleUploader.m */,
+				55E5411FCC65C0E645085A82 /* SampleHandler.h */,
+				2F6A1EE672A49249CFEC2EA8 /* DRSSocketConnection.h */,
+				7AD8A010C026AC5125999D72 /* DRSSampleUploader.h */,
+				1E6644F521B1EBD6D37E2029 /* Info.plist */,
+				A1B839D31786CA2DC691626B /* ScreenShare.entitlements */,
+			);
+			name = ScreenShare;
+			path = ScreenShare;
+			sourceTree = SOURCE_ROOT;
 		};
 		BBD78D7AC51CEA395F1C20DB /* Pods */ = {
 			isa = PBXGroup;
@@ -111,15 +206,34 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				2A98ADA0D43374AB34BD039D /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BC950E56DCD3ABCD3208F398 /* PBXTargetDependency */,
 			);
 			name = drs;
 			productName = drs;
 			productReference = 13B07F961A680F5B00A75B9A /* drs.app */;
 			productType = "com.apple.product-type.application";
+		};
+		8AB7B19AEA2EF977554964F0 /* ScreenShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1C94CB1DDAB751B4CDA1FC4A /* Build configuration list for PBXNativeTarget "ScreenShare" */;
+			buildPhases = (
+				3B1C0C3AF79E158078790EA5 /* Sources */,
+				658D238EF9597B67CBACA24A /* Frameworks */,
+				DDE2D5C1E132F258A6297548 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ScreenShare;
+			productName = ScreenShare;
+			productReference = 1E32D77F506C56998D67CEA4 /* ScreenShare.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -148,6 +262,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* drs */,
+				8AB7B19AEA2EF977554964F0 /* ScreenShare */,
 			);
 		};
 /* End PBXProject section */
@@ -159,6 +274,14 @@
 			files = (
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
+				300D88F2ED4CA0C9F13ABEEF /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDE2D5C1E132F258A6297548 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -248,15 +371,54 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3B1C0C3AF79E158078790EA5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DCB159C8AF6AD6853914B083 /* SampleHandler.m in Sources */,
+				B2CA88389DC2803C5FBC4420 /* DRSSocketConnection.m in Sources */,
+				FA3586D6185B09D8D3BCFC75 /* DRSSampleUploader.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		BC950E56DCD3ABCD3208F398 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ScreenShare;
+			target = 8AB7B19AEA2EF977554964F0 /* ScreenShare */;
+			targetProxy = 82DC7B83CE82DAF80BED44C7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		0FB81C233DD0CB73045E1223 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ScreenShare/ScreenShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = ScreenShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.drs.app.ScreenShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = "";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-drs.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = drs/drs.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = drs/Info.plist;
@@ -271,7 +433,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.drs.app;
 				PRODUCT_NAME = drs;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -287,6 +449,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = drs/drs.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = drs/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -300,7 +463,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.drs.app;
 				PRODUCT_NAME = drs;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -370,6 +533,10 @@
 				);
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
+				);
 				OTHER_CPLUSPLUSFLAGS = (
 					"$(OTHER_CFLAGS)",
 					"-DFOLLY_NO_CONFIG",
@@ -377,8 +544,13 @@
 					"-DFOLLY_USE_LIBCPP=1",
 					"-DFOLLY_CFG_NO_COROUTINES=1",
 					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
 				);
+				PODFILE_DIR = "$(SRCROOT)";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				USE_HERMES = true;
 			};
 			name = Debug;
 		};
@@ -435,6 +607,10 @@
 					"\"$(inherited)\"",
 				);
 				MTL_ENABLE_DEBUG_INFO = NO;
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
+				);
 				OTHER_CPLUSPLUSFLAGS = (
 					"$(OTHER_CFLAGS)",
 					"-DFOLLY_NO_CONFIG",
@@ -442,11 +618,33 @@
 					"-DFOLLY_USE_LIBCPP=1",
 					"-DFOLLY_CFG_NO_COROUTINES=1",
 					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
 				);
+				PODFILE_DIR = "$(SRCROOT)";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
+				USE_HERMES = true;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
+		};
+		96387A0C4F940A02D0514BD0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ScreenShare/ScreenShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = ScreenShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.drs.app.ScreenShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = "";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
 		};
 /* End XCBuildConfiguration section */
 
@@ -456,6 +654,15 @@
 			buildConfigurations = (
 				13B07F941A680F5B00A75B9A /* Debug */,
 				13B07F951A680F5B00A75B9A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1C94CB1DDAB751B4CDA1FC4A /* Build configuration list for PBXNativeTarget "ScreenShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0FB81C233DD0CB73045E1223 /* Release */,
+				96387A0C4F940A02D0514BD0 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
