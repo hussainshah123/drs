@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Device-admin policies for DrsDeviceAdminReceiver.
+
+  The receiver is the DPC component. When the app is provisioned as Device Owner
+  (Android Enterprise: QR / zero-touch in production, test provisioning on a
+  dedicated dev device) the DevicePolicyManager APIs backed by these policies
+  become available: lock, wipe, reboot, camera/keyguard control, etc.
+
+  Declaring a policy here does NOT grant it on its own — the OS only honours the
+  powerful operations (reboot/wipe) when this app is the active Device Owner.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <limit-password />
+        <watch-login />
+        <reset-password />
+        <force-lock />
+        <wipe-data />
+        <expire-password />
+        <encrypted-storage />
+        <disable-camera />
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>

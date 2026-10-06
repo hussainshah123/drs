@@ -54,6 +54,8 @@ export class ScreenShare {
     const stream = (await (mediaDevices as any).getDisplayMedia()) as MediaStream;
     this.stream = stream;
     stream.getTracks().forEach((t: MediaStreamTrack) => {
+      const s = (t as any).getSettings?.() || {};
+      log.info('screen', `capture track ${(t as any).id}: ${s.width || '?'}x${s.height || '?'} fps=${s.frameRate || '?'}`);
       (t as any).addEventListener?.('ended', () => {
         log.warn('screen', 'capture track ended by system/user');
         this.forceStop();

@@ -33,11 +33,13 @@ signalling protocol as `Desktop-Remote-Solution/tools/fakeagent`.
 | `webrtc/peer.ts` | One peer connection per participant (answerer) |
 | `webrtc/inputHandler.ts` | Control-channel events → native input |
 | `native/remoteControl.ts` | JS bridge to the AccessibilityService (Android) |
+| `native/deviceManagement.ts` | JS bridge to DevicePolicyManager / DPC (Android) |
+| `native/clipboard.ts` | JS bridge to clipboard sync (Android) |
 | `webrtc/iosPicker.tsx` | iOS ReplayKit broadcast picker host |
 | `core/permissions.ts` | Startup permission requests + readiness |
 | `agent/controller.ts` | Orchestrator wiring signal + webrtc + input + commands |
 | `screens/*` | Enroll, Status, Settings UI |
-| `android/.../remote/*.kt` | AccessibilityService + native module |
+| `android/.../remote/*.kt` | AccessibilityService, DPC receiver, device-mgmt + clipboard modules |
 | `ios/ScreenShare/*` | Broadcast Upload Extension (SampleHandler + uploader + socket) |
 
 ## Platform support
@@ -71,7 +73,13 @@ real display):
 {"t":"swipe","x1":0.5,"y1":0.8,"x2":0.5,"y2":0.2,"ms":250}
 {"t":"key","k":"back|home|recents|notifications|quick_settings|lock_screen|power_dialog"}
 {"t":"text","text":"hello"}
+{"t":"clipboard_set","text":"hello"}   // write operator's clipboard onto the device
+{"t":"clipboard_get"}                   // device replies {"t":"clipboard","text":..}
 ```
+
+> Clipboard is best-effort: Android 10+ blocks clipboard **reads** from the
+> background, so `clipboard_get` may return an empty string unless the app is
+> focused. Writes usually succeed.
 
 Input is applied only when the participant holds the `control_input` bit and the
 session control mode allows input (`full`, `parallel`, `backstage`).
@@ -93,13 +101,35 @@ session control mode allows input (`full`, `parallel`, `backstage`).
   `POST_NOTIFICATIONS`, `WAKE_LOCK`, and the `DrsAccessibilityService`.
 - `react-native-webrtc` supplies the `MediaProjectionService` (foreground, type
   `mediaProjection`) via manifest merge.
-- `RemoteControlPackage` is registered in `MainApplication.kt`.
+- `RemoteControlPackage` (registered in `MainApplication.kt`) exposes three native
+  modules: `RemoteControlModule`, `DeviceManagementModule`, `ClipboardModule`.
+- `DrsDeviceAdminReceiver` is declared with `BIND_DEVICE_ADMIN` + the
+  `android.app.device_admin` meta-data; the manifest also declares `REBOOT`
+  (honoured only for a Device Owner).
+
+## Device management (DPC / Device Owner — Android)
+
+- `android/.../remote/DrsDeviceAdminReceiver.kt` is the DPC component; policies in
+  `res/xml/device_admin.xml`. `DeviceManagementModule.kt` bridges
+  `DevicePolicyManager` to JS (`native/deviceManagement.ts`).
+- **Lock** works as a plain device admin; **reboot** and **factory wipe** require
+  full **Device Owner** (Android Enterprise QR / zero-touch; test provisioning on
+  a dedicated dev device). The OS enforces this — unsupported ops return a clean
+  `FAILED` command result.
+- Enable from the Status screen (**Enable device admin**), or provision as Device
+  Owner during enterprise enrollment.
+
+### Device commands handled (`drs.signal.v1.Command`)
+
+`REFRESH_INFO`, `LOCK`/`MDM_LOCK` (DPC lock, a11y fallback), `REBOOT` (owner),
+`MDM_WIPE` (owner). `SHUTDOWN`, `LOGOFF`, `MDM_SELECTIVE_WIPE`, `MDM_LOCATE` are
+acked `FAILED` as not applicable on Android. `CredentialDelivery` is acked as not
+delivered (no Android logon/UAC/run-as injection target; the blob is not unsealed).
 
 ## Not yet implemented
 
 - End-to-end session encryption / key epochs (agent currently relies on DTLS-SRTP
   + the gateway's trust rules; the E2E sealed-key handshake from
   architecture §1.5 is a follow-up).
-- Credential injection (`CredentialDelivery`) is acked as unsupported.
-- Most device commands beyond `LOCK`, `MDM_LOCK`, `REFRESH_INFO` return failed.
-- Clipboard / file transfer channels.
+- File transfer channel.
+- `MDM_LOCATE` (needs location services + runtime permission) — currently `FAILED`.

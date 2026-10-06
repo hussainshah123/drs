@@ -7,6 +7,10 @@
     <!-- Screen capture foreground service (react-native-webrtc MediaProjectionService). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Reboot is a signature|privileged permission; only honoured when this app
+         is the Device Owner. Declared so the DevicePolicyManager.reboot() call is
+         valid; the OS still gates it on device-owner status. -->
+    <uses-permission android:name="android.permission.REBOOT" />
 
     <application
       android:name=".MainApplication"
@@ -29,6 +33,22 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!-- DPC / Device Owner component (DevicePolicyManager admin). On a company-
+           owned device this is provisioned as Device Owner via Android Enterprise
+           (QR / zero-touch); BIND_DEVICE_ADMIN restricts binding to the system. -->
+      <receiver
+        android:name=".remote.DrsDeviceAdminReceiver"
+        android:exported="true"
+        android:permission="android.permission.BIND_DEVICE_ADMIN">
+        <meta-data
+          android:name="android.app.device_admin"
+          android:resource="@xml/device_admin" />
+        <intent-filter>
+          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+        </intent-filter>
+      </receiver>
 
       <!-- Remote-control input injection via AccessibilityService. -->
       <service

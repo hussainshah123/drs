@@ -12,6 +12,7 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
   RTCIceCandidate,
+  RTCRtpReceiver,
   type MediaStream,
   type MediaStreamTrack,
 } from 'react-native-webrtc';
@@ -120,6 +121,11 @@ export class Peer {
       try {
         vtx.direction = 'sendrecv';
       } catch {}
+      // Prefer VP8 for the outbound screen. On some devices (seen on Infinix /
+      // Android with non-16-multiple screen widths) the hardware H.264 encoder
+      // produces 0 frames for screencast; VP8's software encoder is reliable at
+      // any resolution and every browser viewer decodes it.
+      this.preferVp8(vtx);
       log.info('peer', `screen bound to video transceiver for participant ${this.participantId}`);
     } else {
       try {
@@ -128,6 +134,28 @@ export class Peer {
       } catch (e: any) {
         log.warn('peer', `addTrack failed: ${e?.message || e}`);
       }
+    }
+  }
+
+  /**
+   * preferVp8 reorders the transceiver's codec preferences so VP8 is first,
+   * making the agent encode VP8 regardless of what the offer listed first.
+   * Best-effort: if the API is unavailable it leaves the default order.
+   */
+  private preferVp8(vtx: any): void {
+    try {
+      const caps = (RTCRtpReceiver as any).getCapabilities?.('video');
+      if (!caps?.codecs || !vtx?.setCodecPreferences) {
+        return;
+      }
+      const vp8 = caps.codecs.filter((c: any) => /vp8/i.test(c.mimeType));
+      const rest = caps.codecs.filter((c: any) => !/vp8/i.test(c.mimeType));
+      if (vp8.length) {
+        vtx.setCodecPreferences([...vp8, ...rest]);
+        log.info('peer', 'codec preference set: VP8 first');
+      }
+    } catch (e: any) {
+      log.warn('peer', `setCodecPreferences failed: ${e?.message || e}`);
     }
   }
 

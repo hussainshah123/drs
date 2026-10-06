@@ -38,6 +38,8 @@ import {Peer} from '../webrtc/peer';
 import {ScreenShare} from '../webrtc/screenShare';
 import {handleControlMessage} from '../webrtc/inputHandler';
 import {RemoteControl} from '../native/remoteControl';
+import {DeviceManagement, type DeviceOwnerStatus} from '../native/deviceManagement';
+import {DeviceData} from '../native/deviceData';
 import {Cap, can} from './capabilities';
 
 export type PendingConsent = {
@@ -64,11 +66,27 @@ export type ControllerState = {
   /** The owner has pre-started screen sharing so sessions reuse it. */
   sharing: boolean;
   accessibilityEnabled: boolean;
+  /** DPC status: whether the app is a device admin / the Device Owner. */
+  deviceAdminActive: boolean;
+  deviceOwner: boolean;
   participants: ParticipantView[];
   pendingConsent: PendingConsent | null;
 };
 
 type SessionMeta = {controlMode: number};
+
+/** Command kinds (mirror of CommandKind in the proto) the Android agent acts on. */
+const CmdKind = {
+  REFRESH_INFO: 3,
+  REBOOT: 5,
+  SHUTDOWN: 7,
+  LOCK: 8,
+  LOGOFF: 9,
+  MDM_WIPE: 17,
+  MDM_SELECTIVE_WIPE: 18,
+  MDM_LOCK: 23,
+  MDM_LOCATE: 24,
+} as const;
 
 export class AgentController {
   private signal: SignalClient;
@@ -105,6 +123,8 @@ export class AgentController {
       screenActive: false,
       sharing: false,
       accessibilityEnabled: false,
+      deviceAdminActive: false,
+      deviceOwner: false,
       participants: [],
       pendingConsent: null,
     };
@@ -122,6 +142,7 @@ export class AgentController {
       onSessionEnded: e => this.onSessionEnded(e),
       onRekeyRequest: r => log.info('ctrl', `rekey requested: ${r?.reason || ''}`),
       onCommand: c => void this.onCommand(c),
+      onCredentialDelivery: d => this.onCredentialDelivery(d),
       onMessage: m => this.onMessage(m),
       onGatewayError: (code, msg) => log.warn('ctrl', `gateway error ${code}: ${msg}`),
     };
@@ -137,6 +158,7 @@ export class AgentController {
     log.info('ctrl', 'starting agent');
     this.signal.start();
     void this.refreshAccessibility();
+    void this.refreshDeviceAdmin();
   }
 
   stop(): void {
@@ -158,6 +180,17 @@ export class AgentController {
   async refreshAccessibility(): Promise<void> {
     const enabled = await RemoteControl.isAccessibilityEnabled();
     this.patch({accessibilityEnabled: enabled});
+  }
+
+  /** Refreshes the DPC status (device admin / Device Owner) into the state. */
+  async refreshDeviceAdmin(): Promise<void> {
+    const s: DeviceOwnerStatus = await DeviceManagement.getStatus();
+    this.patch({deviceAdminActive: s.adminActive, deviceOwner: s.deviceOwner});
+  }
+
+  /** Opens the system "add device admin" screen (dev / non-owner devices). */
+  openDeviceAdminSettings(): Promise<void> {
+    return DeviceManagement.openDeviceAdminSettings();
   }
 
   /**
@@ -357,7 +390,8 @@ export class AgentController {
     if (!can(perm, Cap.CONTROL_INPUT) || !modeAllowsInput) {
       return; // view-only participant: ignore input
     }
-    void handleControlMessage(data);
+    const peer = this.peers.get(pid);
+    void handleControlMessage(data, reply => peer?.sendControl(reply));
   }
 
   private async onPeerConnected(pid: number) {
@@ -412,6 +446,32 @@ export class AgentController {
 
   private onMessage(m: SignalMsg) {
     log.info('ctrl', `message ${m.message_id} received`);
+    // Decode the body_json blob and surface it as a local notification.
+    let title = m.sender_name ? String(m.sender_name) : 'Remote message';
+    let body = '';
+    try {
+      const TD = (globalThis as any).TextDecoder;
+      const raw =
+        m.body_json instanceof Uint8Array && TD
+          ? new TD().decode(m.body_json)
+          : typeof m.body_json === 'string'
+          ? m.body_json
+          : '';
+      if (raw) {
+        try {
+          const obj = JSON.parse(raw);
+          body = String(obj.body ?? obj.text ?? obj.message ?? raw);
+          if (obj.title) {
+            title = String(obj.title);
+          }
+        } catch {
+          body = raw; // plain-text body
+        }
+      }
+    } catch {}
+    if (body) {
+      void DeviceData.notify(title, body);
+    }
     this.signal.sendMessageAck(Number(m.message_id), MessageStatus.DELIVERED);
   }
 
@@ -422,40 +482,108 @@ export class AgentController {
     log.info('ctrl', `command ${id} kind=${kind}`);
     this.signal.sendCommandAck(id, key, CommandAckState.RUNNING);
 
-    // COMMAND_KIND_LOCK (8) and COMMAND_KIND_MDM_LOCK (23): lock the screen.
-    if (kind === 8 || kind === 23) {
-      const ok = await RemoteControl.globalAction('GLOBAL_ACTION_LOCK_SCREEN');
-      this.signal.sendCommandResult({
-        command_id: id,
-        idempotency_key: key,
-        status: ok ? CommandStatus.SUCCEEDED : CommandStatus.FAILED,
-        output: ok ? 'screen locked' : 'accessibility service not enabled',
-      });
-      return;
-    }
-    // COMMAND_KIND_REFRESH_INFO (3): resend inventory.
-    if (kind === 3) {
-      this.signal.sendInventoryReport(
-        1,
-        {platform: 'android', os_version: this.agentInfo.osVersion, hostname: this.agentInfo.hostname},
-        [],
-        [],
-      );
+    const ok = (output: string) =>
       this.signal.sendCommandResult({
         command_id: id,
         idempotency_key: key,
         status: CommandStatus.SUCCEEDED,
-        output: 'inventory refreshed',
+        output,
       });
-      return;
+    const fail = (detail: string) =>
+      this.signal.sendCommandResult({
+        command_id: id,
+        idempotency_key: key,
+        status: CommandStatus.FAILED,
+        error_detail: detail,
+      });
+
+    try {
+      switch (kind) {
+        case CmdKind.LOCK:
+        case CmdKind.MDM_LOCK: {
+          // Prefer the DevicePolicyManager lock (works without accessibility and
+          // on a Device Owner); fall back to the accessibility global action.
+          let locked = await DeviceManagement.lockNow();
+          if (!locked) {
+            locked = await RemoteControl.globalAction('GLOBAL_ACTION_LOCK_SCREEN');
+          }
+          locked
+            ? ok('screen locked')
+            : fail('cannot lock: enable device admin or the accessibility service');
+          return;
+        }
+        case CmdKind.REBOOT: {
+          await DeviceManagement.reboot();
+          ok('reboot initiated');
+          return;
+        }
+        case CmdKind.MDM_WIPE: {
+          const external = this.parseBool(c.payload_json, 'external');
+          await DeviceManagement.wipeDevice(external);
+          ok('device wipe initiated');
+          return;
+        }
+        case CmdKind.REFRESH_INFO: {
+          await this.refreshDeviceAdmin();
+          this.signal.sendInventoryReport(
+            1,
+            {platform: 'android', os_version: this.agentInfo.osVersion, hostname: this.agentInfo.hostname},
+            [],
+            [],
+          );
+          ok('inventory refreshed');
+          return;
+        }
+        // Not applicable on Android (no user session logoff / power-off / work
+        // profile to selectively wipe; locate needs location services not wired).
+        case CmdKind.SHUTDOWN:
+        case CmdKind.LOGOFF:
+        case CmdKind.MDM_SELECTIVE_WIPE:
+        case CmdKind.MDM_LOCATE:
+          fail(`command kind ${kind} not applicable on android agent`);
+          return;
+        default:
+          fail(`command kind ${kind} not supported on android agent`);
+          return;
+      }
+    } catch (e: any) {
+      fail(e?.message || String(e));
     }
-    // Everything else is not supported on the Android agent (yet).
-    this.signal.sendCommandResult({
-      command_id: id,
-      idempotency_key: key,
-      status: CommandStatus.FAILED,
-      error_detail: `command kind ${kind} not supported on android agent`,
-    });
+  }
+
+  /** parseBool reads a boolean field from a protobuf `bytes` payload_json blob. */
+  private parseBool(payloadJson: unknown, field: string): boolean {
+    try {
+      if (!payloadJson) {
+        return false;
+      }
+      // TextDecoder is installed as a global by src/polyfills (Hermes lacks it).
+      const TD = (globalThis as any).TextDecoder;
+      const text =
+        payloadJson instanceof Uint8Array && TD
+          ? new TD().decode(payloadJson)
+          : String(payloadJson);
+      const obj = JSON.parse(text);
+      return obj?.[field] === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Credential delivery (logon/UAC/run-as) is a Windows concept: Android has no
+   * equivalent injection target for a sealed OS credential, so the agent acks the
+   * delivery as not performed with a clear reason rather than leaving the
+   * operator waiting. (The sealed blob is never unsealed here.)
+   */
+  private onCredentialDelivery(d: SignalMsg) {
+    const deliveryId = d?.delivery_id || '';
+    log.info('ctrl', `credential delivery ${deliveryId} — not applicable on android`);
+    this.signal.sendCredentialDeliveryAck(
+      deliveryId,
+      false,
+      'credential injection not applicable on android',
+    );
   }
 
   // -------------------------------------------------------------------------

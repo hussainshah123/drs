@@ -18,6 +18,7 @@ import {
 import {Avatar, Button, Card, H2, Label, Logo, P, Pill, Row, StatusRow} from '../ui/components';
 import {T} from '../ui/theme';
 import {RemoteControl} from '../native/remoteControl';
+import {DeviceManagement} from '../native/deviceManagement';
 import {getPermissionState, requestStartupPermissions, type PermissionState} from '../core/permissions';
 import {recentLogs, subscribeLogs, type LogEntry} from '../core/log';
 import type {AgentController, ControllerState} from '../agent/controller';
@@ -58,6 +59,7 @@ export function StatusScreen({
     const sub = AppState.addEventListener('change', s => {
       if (s === 'active') {
         void controller.refreshAccessibility();
+        void controller.refreshDeviceAdmin();
         void refreshPerms();
       }
     });
@@ -113,6 +115,38 @@ export function StatusScreen({
           )}
           {perms && !perms.notifications && (
             <Button title="Open notification settings" kind="ghost" small onPress={() => Linking.openSettings()} />
+          )}
+          {Platform.OS === 'android' && DeviceManagement.available() && (
+            <>
+              <StatusRow
+                label="Device management"
+                ok={state.deviceOwner}
+                warn={state.deviceAdminActive && !state.deviceOwner}
+                value={
+                  state.deviceOwner
+                    ? 'device owner'
+                    : state.deviceAdminActive
+                    ? 'admin only'
+                    : 'off'
+                }
+              />
+              {!state.deviceAdminActive && (
+                <View style={{marginTop: 8}}>
+                  <P dim>
+                    Enable device admin so an operator can remotely lock this
+                    company device. Reboot and wipe need full Device Owner, set up
+                    during enterprise enrollment.
+                  </P>
+                  <Button
+                    title="Enable device admin"
+                    kind="soft"
+                    onPress={async () => {
+                      await controller.openDeviceAdminSettings();
+                    }}
+                  />
+                </View>
+              )}
+            </>
           )}
           {Platform.OS === 'ios' && (
             <P dim>
