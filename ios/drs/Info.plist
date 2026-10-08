@@ -44,7 +44,7 @@
 	<key>RTCAppGroupIdentifier</key>
 	<string>group.com.drs.app</string>
 	<key>RTCScreenSharingExtension</key>
-	<string>com.drs.app.ScreenShare</string>
+	<string>com.fortdice.drsapp.ScreenShare</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
