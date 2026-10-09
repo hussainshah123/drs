@@ -17,12 +17,26 @@ import {
   type MediaStreamTrack,
 } from 'react-native-webrtc';
 import {log} from '../core/log';
+import {signMessageBytes} from '../core/crypto';
+import {bodyKey, decodeSession, encodeSession, type SessionMsg} from '../proto/session';
 
 export type IceServer = {urls: string[]; username?: string; credential?: string};
 
+/** Identity the agent signs into its AgentHello (docs session-protocol §1.5). */
+export type HelloConfig = {
+  deviceId: string;
+  agentVersion: string;
+  permissions: number;
+  /** base64 tweetnacl secret key (the enrolled Ed25519 identity). */
+  secretKey: string;
+};
+
 export type PeerCallbacks = {
   onLocalIce: (cand: {candidate: string; sdpMid: string | null; sdpMLineIndex: number | null} | null) => void;
+  /** Legacy JSON control channel (kept for older viewers). */
   onControlData: (data: string) => void;
+  /** Decoded in-session InputEvent (drs.session.v1), viewer → agent. */
+  onInput: (input: SessionMsg) => void;
   onConnected: () => void;
   onFailed: () => void;
 };
@@ -34,6 +48,9 @@ export class Peer {
   private remoteSet = false;
   private pendingRemoteIce: RTCIceCandidate[] = [];
   private controlChannel: any = null;
+  private sessionChannel: any = null; // "drs.session" (ordered, reliable)
+  private answerFingerprint = ''; // a=fingerprint of our SDP answer
+  private seq = 0;
   private closed = false;
 
   constructor(
@@ -41,6 +58,7 @@ export class Peer {
     sessionId: string,
     iceServers: IceServer[],
     forceRelay: boolean,
+    private hello: HelloConfig,
     private cb: PeerCallbacks,
   ) {
     this.participantId = participantId;
@@ -81,14 +99,109 @@ export class Peer {
     pc.ondatachannel = (ev: any) => {
       const ch = ev.channel;
       log.info('peer', `data channel "${ch.label}" from participant ${this.participantId}`);
-      if (ch.label === 'control' || ch.label === 'input') {
+      if (ch.label === 'drs.session') {
+        // The in-session channel: the agent must identify itself with a signed
+        // AgentHello the moment it opens, or the viewer drops the session after
+        // ~10s ("the agent did not identify itself").
+        this.sessionChannel = ch;
+        try {
+          ch.binaryType = 'arraybuffer';
+        } catch {}
+        ch.onopen = () => this.sendAgentHello();
+        ch.onmessage = (m: any) => this.onSessionData(m.data);
+      } else if (ch.label === 'drs.input.move') {
+        try {
+          ch.binaryType = 'arraybuffer';
+        } catch {}
+        ch.onmessage = (m: any) => this.onSessionData(m.data);
+      } else if (ch.label === 'control' || ch.label === 'input') {
+        // Legacy JSON control channel (older viewers).
         this.controlChannel = ch;
         ch.onmessage = (m: any) => this.cb.onControlData(String(m.data));
       } else {
-        // chat or other channels: echo-free, just log for now.
         ch.onmessage = (m: any) => log.debug('peer', `data(${ch.label}): ${String(m.data).slice(0, 80)}`);
       }
     };
+  }
+
+  /**
+   * sendAgentHello binds this WebRTC connection to the device identity: it signs
+   * the hello payload with the enrolled Ed25519 key and includes the DTLS
+   * fingerprint of our SDP answer, so the viewer can verify the stream is really
+   * from this device (docs/architecture.md §1.5 step 7).
+   */
+  private sendAgentHello(): void {
+    const ch = this.sessionChannel;
+    if (!ch || ch.readyState !== 'open') {
+      return;
+    }
+    const sid = this.sessionId;
+    const pid = this.participantId;
+    const did = this.hello.deviceId;
+    const fp = this.answerFingerprint;
+    const payload = `drs-agent-hello-v1\n${sid}\n${pid}\n${did}\n${fp}`;
+    let signature: Uint8Array;
+    try {
+      signature = signMessageBytes(payload, this.hello.secretKey);
+    } catch (e: any) {
+      log.error('peer', `agent_hello sign failed: ${e?.message || e}`);
+      return;
+    }
+    const msg: SessionMsg = {
+      seq: ++this.seq,
+      agent_hello: {
+        device_id: did,
+        session_id: sid,
+        participant_id: pid,
+        dtls_fingerprint: fp,
+        signature,
+        agent_version: this.hello.agentVersion,
+        permissions: this.hello.permissions,
+      },
+    };
+    this.sendSession(msg);
+    log.info('peer', `sent agent_hello (fp=${fp.slice(0, 20)}…, perms=${this.hello.permissions})`);
+  }
+
+  /** sendSession encodes and sends a SessionMessage on the drs.session channel. */
+  private sendSession(msg: SessionMsg): void {
+    const ch = this.sessionChannel;
+    if (!ch || ch.readyState !== 'open') {
+      return;
+    }
+    try {
+      const bytes = encodeSession(msg);
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      ch.send(buf);
+    } catch (e: any) {
+      log.warn('peer', `session send failed: ${e?.message || e}`);
+    }
+  }
+
+  /** onSessionData decodes an inbound SessionMessage and routes input/control. */
+  private onSessionData(data: any): void {
+    let bytes: Uint8Array;
+    if (data instanceof ArrayBuffer) {
+      bytes = new Uint8Array(data);
+    } else if (ArrayBuffer.isView(data)) {
+      bytes = new Uint8Array((data as any).buffer, (data as any).byteOffset, (data as any).byteLength);
+    } else {
+      return; // unexpected text frame
+    }
+    let msg: SessionMsg;
+    try {
+      msg = decodeSession(bytes);
+    } catch {
+      return;
+    }
+    const key = bodyKey(msg);
+    if (key === 'input') {
+      this.cb.onInput(msg.input);
+    } else if (key === 'control') {
+      // request_keyframe: force an IDR by renegotiating is heavy; the browser
+      // usually recovers via RTCP PLI automatically, so we just log it here.
+      log.debug('peer', `control: ${JSON.stringify(msg.control)}`);
+    }
   }
 
   /**
@@ -177,9 +290,15 @@ export class Peer {
     const ans = await this.pc.createAnswer();
     await this.pc.setLocalDescription(ans);
     const sdp = (this.pc.localDescription as any)?.sdp || (ans as any).sdp;
+    // The DTLS fingerprint of our answer, signed into AgentHello so the viewer
+    // can prove the media really terminates at this device (not a relay MITM).
+    this.answerFingerprint = extractFingerprint(sdp);
     const hasVideo = /m=video/.test(sdp || '');
     const sendsVideo = /a=(sendrecv|sendonly)/.test(sdp || '');
-    log.info('peer', `answer created (m=video:${hasVideo}, sends:${sendsVideo})`);
+    log.info(
+      'peer',
+      `answer created (m=video:${hasVideo}, sends:${sendsVideo}, fp=${this.answerFingerprint.slice(0, 16)}…)`,
+    );
     return sdp;
   }
 
@@ -287,7 +406,20 @@ export class Peer {
       this.controlChannel?.close?.();
     } catch {}
     try {
+      this.sessionChannel?.close?.();
+    } catch {}
+    try {
       this.pc.close();
     } catch {}
   }
+}
+
+/**
+ * extractFingerprint returns the a=fingerprint value of an SDP, e.g.
+ * "sha-256 AB:CD:…" — the exact text the AgentHello must sign. Prefers a
+ * session-level line, else the first media-level one.
+ */
+function extractFingerprint(sdp: string): string {
+  const m = (sdp || '').match(/^a=fingerprint:(.+)$/im);
+  return m ? m[1].trim() : '';
 }

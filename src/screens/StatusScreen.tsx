@@ -13,6 +13,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import {Avatar, Button, Card, H2, Label, Logo, P, Pill, Row, StatusRow} from '../ui/components';
@@ -32,15 +33,7 @@ const STATUS_META: Record<string, {color: string; soft: string; label: string; h
   closed: {color: T.textFaint, soft: '', label: 'Offline', hint: 'Not connected.'},
 };
 
-export function StatusScreen({
-  controller,
-  onOpenSettings,
-  onUnenroll,
-}: {
-  controller: AgentController;
-  onOpenSettings: () => void;
-  onUnenroll: () => void;
-}) {
+export function StatusScreen({controller}: {controller: AgentController}) {
   const [state, setState] = useState<ControllerState>(controller.getState());
   const [logs, setLogs] = useState<LogEntry[]>(recentLogs().slice(-40).reverse());
   const [perms, setPerms] = useState<PermissionState | null>(null);
@@ -228,8 +221,6 @@ export function StatusScreen({
           </View>
         </Card>
 
-        <Button title="Settings" kind="ghost" onPress={onOpenSettings} />
-        <Button title="Unenroll this device" kind="danger" onPress={onUnenroll} />
         <View style={{height: 20}} />
       </ScrollView>
 
@@ -323,5 +314,5 @@ const styles = StyleSheet.create({
   logTime: {color: T.textFaint},
   logTag: {color: T.accent, fontWeight: '700'},
   logDim: {color: T.textFaint, fontSize: 12},
-  modalBg: {flex: 1, backgroundColor: 'rgba(3,6,12,0.75)', justifyContent: 'center', padding: 24},
+  modalBg: {flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', justifyContent: 'center', padding: 24},
 });

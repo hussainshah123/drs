@@ -39,6 +39,16 @@ export function signNonce(nonce: string, secretKeyB64: string): string {
   return encodeBase64(sig);
 }
 
+/**
+ * signMessageBytes signs the UTF-8 bytes of a message with the device key and
+ * returns the raw 64-byte Ed25519 signature (for protobuf `bytes` fields such as
+ * AgentHello.signature), verifiable with the registered public key.
+ */
+export function signMessageBytes(message: string, secretKeyB64: string): Uint8Array {
+  const secret = decodeBase64(secretKeyB64);
+  return nacl.sign.detached(decodeUTF8(message), secret);
+}
+
 /** randomUUID returns a RFC-4122 v4 UUID from the secure RNG. */
 export function randomUUID(): string {
   const b = nacl.randomBytes(16);

@@ -3,12 +3,17 @@
  * (POST /v1/enrollment-tokens) and the device is enrolled here. The API base
  * URL is editable so the same build points at any backend.
  */
-import React, {useState} from 'react';
-import {Alert, ScrollView, StyleSheet, Text, View} from 'react-native';
+import React, {useEffect, useRef, useState} from 'react';
+import {Alert, Platform, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {Button, Card, Field, H1, Label, Logo, P} from '../ui/components';
 import {T} from '../ui/theme';
 import {enrollDevice} from '../core/enroll';
-import {saveConfig, type AppConfig, type Identity} from '../core/storage';
+import {
+  DEFAULT_ENROLLMENT_TOKEN,
+  saveConfig,
+  type AppConfig,
+  type Identity,
+} from '../core/storage';
 
 export function EnrollScreen({
   config,
@@ -20,11 +25,14 @@ export function EnrollScreen({
   onEnrolled: (id: Identity) => void;
 }) {
   const [apiUrl, setApiUrl] = useState(config.apiBaseUrl);
-  const [token, setToken] = useState('');
+  // Android ships with a pre-provisioned token so the agent enrolls itself.
+  const [token, setToken] = useState(
+    Platform.OS === 'android' ? DEFAULT_ENROLLMENT_TOKEN : '',
+  );
   const [busy, setBusy] = useState(false);
 
-  const enroll = async () => {
-    if (!token.trim()) {
+  const enroll = async (tok: string = token) => {
+    if (!tok.trim()) {
       Alert.alert('Enrollment token required', 'Paste the token from the portal.');
       return;
     }
@@ -33,7 +41,7 @@ export function EnrollScreen({
       const next: AppConfig = {...config, apiBaseUrl: apiUrl.trim()};
       await saveConfig(next);
       onConfigChange(next);
-      const id = await enrollDevice(next, token.trim());
+      const id = await enrollDevice(next, tok.trim());
       onEnrolled(id);
     } catch (e: any) {
       Alert.alert('Enrollment failed', e?.message || String(e));
@@ -41,6 +49,20 @@ export function EnrollScreen({
       setBusy(false);
     }
   };
+
+  // One-shot auto-enroll on Android when a token is baked in: the device comes
+  // online by itself on first launch, no user interaction needed.
+  const autoEnrolled = useRef(false);
+  useEffect(() => {
+    if (autoEnrolled.current) {
+      return;
+    }
+    if (Platform.OS === 'android' && DEFAULT_ENROLLMENT_TOKEN) {
+      autoEnrolled.current = true;
+      enroll(DEFAULT_ENROLLMENT_TOKEN);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -70,7 +92,7 @@ export function EnrollScreen({
           placeholder="paste the token from the portal"
           multiline
         />
-        <Button title="Enroll device" onPress={enroll} loading={busy} />
+        <Button title="Enroll device" onPress={() => enroll()} loading={busy} />
       </Card>
 
       <P dim>

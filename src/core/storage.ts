@@ -26,6 +26,14 @@ export type AppConfig = {
   autoAcceptConsent: boolean;
 };
 
+/**
+ * Baked-in enrollment token for this Android build. The admin pre-provisions the
+ * token so the agent can enroll itself on first launch without the end user
+ * pasting anything (see EnrollScreen auto-enroll). Empty string = no default.
+ * iOS builds leave this empty; the iOS token is entered by hand.
+ */
+export const DEFAULT_ENROLLMENT_TOKEN = 'drs_enr_PYV3WOJGPPBNMDBQ5S6JLITSS6';
+
 export const DEFAULT_CONFIG: AppConfig = {
   // Deployed backend. For local dev use http://10.0.2.2:8080 (Android emulator).
   apiBaseUrl: 'https://api.2-25-114-216.nip.io',

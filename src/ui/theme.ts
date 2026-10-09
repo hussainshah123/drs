@@ -1,28 +1,28 @@
-/** Design tokens for the agent UI — a modern, dark operator-console look. */
+/** Design tokens for the agent UI — an orange / black / white look. */
 export const T = {
-  // Surfaces
-  bg: '#090c14',
-  bgElev: '#0e131f',
-  card: '#141b2b',
-  cardAlt: '#1a2336',
-  border: '#232e47',
-  borderSoft: '#1b2437',
+  // Surfaces (black → charcoal)
+  bg: '#0A0A0B',
+  bgElev: '#121214',
+  card: '#1A1A1D',
+  cardAlt: '#232327',
+  border: '#2B2B30',
+  borderSoft: '#1E1E22',
 
-  // Text
-  text: '#eef2fb',
-  textDim: '#8a97b1',
-  textFaint: '#5c6882',
+  // Text (white → grey)
+  text: '#FFFFFF',
+  textDim: '#A7A7AE',
+  textFaint: '#6C6C74',
 
-  // Brand + status
-  accent: '#5b8cff',
-  accentSoft: 'rgba(91,140,255,0.14)',
-  violet: '#9d7bff',
-  good: '#35d0a5',
-  goodSoft: 'rgba(53,208,165,0.14)',
-  warn: '#f5b544',
+  // Brand + status (orange accent)
+  accent: '#FF7A1A',
+  accentSoft: 'rgba(255,122,26,0.14)',
+  violet: '#FF9F45',
+  good: '#32D583',
+  goodSoft: 'rgba(50,213,131,0.14)',
+  warn: '#F5B544',
   warnSoft: 'rgba(245,181,68,0.14)',
-  bad: '#ff6b6b',
-  badSoft: 'rgba(255,107,107,0.14)',
+  bad: '#FF5A5A',
+  badSoft: 'rgba(255,90,90,0.14)',
 
   // Metrics
   space: 16,

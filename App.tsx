@@ -20,7 +20,6 @@ import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
 import {T} from './src/ui/theme';
 import {EnrollScreen} from './src/screens/EnrollScreen';
-import {StatusScreen} from './src/screens/StatusScreen';
 import {SettingsScreen} from './src/screens/SettingsScreen';
 import {
   clearIdentity,
@@ -32,6 +31,7 @@ import {
 import {AGENT_VERSION, defaultHostname, osVersion} from './src/core/deviceInfo';
 import {AgentController} from './src/agent/controller';
 import {IosScreenPicker} from './src/webrtc/iosPicker';
+import {MainTabs} from './src/screens/MainTabs';
 
 // Module-level singleton so React dev double-mounts / re-renders never create a
 // second controller (two signal connections fight over the same device: the
@@ -149,9 +149,9 @@ function App(): React.JSX.Element {
         <SettingsScreen config={config} onSave={onSaveSettings} onBack={() => setRoute('status')} />
       );
     }
-    // status
+    // status → tabbed shell (Home / Messages / Alerts / Access)
     return controllerRef.current ? (
-      <StatusScreen
+      <MainTabs
         controller={controllerRef.current}
         onOpenSettings={() => setRoute('settings')}
         onUnenroll={onUnenroll}

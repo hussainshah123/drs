@@ -37,6 +37,8 @@ import {
 import {Peer} from '../webrtc/peer';
 import {ScreenShare} from '../webrtc/screenShare';
 import {handleControlMessage} from '../webrtc/inputHandler';
+import {applyInputEvent, forgetInput} from '../webrtc/sessionInput';
+import type {SessionMsg} from '../proto/session';
 import {RemoteControl} from '../native/remoteControl';
 import {DeviceManagement, type DeviceOwnerStatus} from '../native/deviceManagement';
 import {DeviceData} from '../native/deviceData';
@@ -326,23 +328,36 @@ export class AgentController {
     this.sessionOf.set(pid, sessionId);
     this.signal.addSession(sessionId);
 
-    const peer = new Peer(pid, sessionId, this.config.iceServers, this.config.forceRelay, {
-      onLocalIce: cand =>
-        this.signal.sendIceCandidate(
-          sessionId,
-          pid,
-          cand
-            ? {
-                candidate: cand.candidate,
-                sdpMid: cand.sdpMid,
-                sdpMLineIndex: cand.sdpMLineIndex,
-              }
-            : null,
-        ),
-      onControlData: data => this.onControlData(pid, data),
-      onConnected: () => this.onPeerConnected(pid),
-      onFailed: () => log.warn('ctrl', `peer ${pid} failed`),
-    });
+    const peer = new Peer(
+      pid,
+      sessionId,
+      this.config.iceServers,
+      this.config.forceRelay,
+      {
+        deviceId: this.identity.deviceId,
+        agentVersion: this.agentInfo.agentVersion,
+        permissions: this.perms.get(pid) || 0,
+        secretKey: this.identity.keyPair.secretKey,
+      },
+      {
+        onLocalIce: cand =>
+          this.signal.sendIceCandidate(
+            sessionId,
+            pid,
+            cand
+              ? {
+                  candidate: cand.candidate,
+                  sdpMid: cand.sdpMid,
+                  sdpMLineIndex: cand.sdpMLineIndex,
+                }
+              : null,
+          ),
+        onControlData: data => this.onControlData(pid, data),
+        onInput: input => this.onSessionInput(pid, input),
+        onConnected: () => this.onPeerConnected(pid),
+        onFailed: () => log.warn('ctrl', `peer ${pid} failed`),
+      },
+    );
     this.peers.set(pid, peer);
 
     try {
@@ -392,6 +407,23 @@ export class AgentController {
     }
     const peer = this.peers.get(pid);
     void handleControlMessage(data, reply => peer?.sendControl(reply));
+  }
+
+  /** onSessionInput applies a decoded drs.session InputEvent, if the participant
+   * holds control_input and the mode allows input. */
+  private onSessionInput(pid: number, input: SessionMsg) {
+    const perm = this.perms.get(pid) || 0;
+    const sessionId = this.sessionOf.get(pid);
+    const mode = sessionId ? this.sessions.get(sessionId)?.controlMode : undefined;
+    const modeAllowsInput =
+      mode === undefined ||
+      mode === ControlMode.FULL ||
+      mode === ControlMode.PARALLEL ||
+      mode === ControlMode.BACKSTAGE;
+    if (!can(perm, Cap.CONTROL_INPUT) || !modeAllowsInput) {
+      return; // view-only participant: ignore input
+    }
+    void applyInputEvent(pid, input);
   }
 
   private async onPeerConnected(pid: number) {
@@ -598,6 +630,7 @@ export class AgentController {
       this.screen.release();
     }
     this.connected.delete(pid);
+    forgetInput(pid);
     this.patch({screenActive: this.screen.active});
   }
 
