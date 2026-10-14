@@ -17,9 +17,9 @@
  *
  * UI observes state via subscribe(); it never talks to the gateway directly.
  */
-import {Api} from '../core/api';
+import {Api, ApiError, type ApiMessage} from '../core/api';
 import {log} from '../core/log';
-import {makeTokenProvider} from '../core/token';
+import {makeTokenProvider, type DeviceToken} from '../core/token';
 import type {AppConfig, Identity} from '../core/storage';
 import {
   SignalClient,
@@ -31,9 +31,13 @@ import {
   CommandAckState,
   CommandStatus,
   ControlMode,
+  MessageKind,
   MessageStatus,
   type SignalMsg,
 } from '../proto/signal';
+import * as Inbox from '../messages/store';
+import type {InboxKind, InboxStatus} from '../messages/store';
+import {pushNotif} from '../notifications/store';
 import {Peer} from '../webrtc/peer';
 import {ScreenShare} from '../webrtc/screenShare';
 import {handleControlMessage} from '../webrtc/inputHandler';
@@ -90,6 +94,79 @@ const CmdKind = {
   MDM_LOCATE: 24,
 } as const;
 
+const MESSAGE_KINDS: Record<number, InboxKind> = {
+  [MessageKind.CHAT]: 'chat',
+  [MessageKind.BANNER]: 'banner',
+  [MessageKind.TRAY]: 'tray',
+  [MessageKind.FULLSCREEN]: 'fullscreen',
+};
+
+const ACK_STATUS: Record<InboxStatus, number> = {
+  delivered: MessageStatus.DELIVERED,
+  read: MessageStatus.READ,
+  acknowledged: MessageStatus.ACKNOWLEDGED,
+  dismissed: MessageStatus.DISMISSED,
+};
+
+/**
+ * messageText reads the display text from a message's body_json: {"text": …}
+ * for chat and plain sends. A template body without text is shown raw, like
+ * the desktop agents do.
+ */
+function messageText(bodyJson: unknown): string {
+  let raw = '';
+  try {
+    const TD = (globalThis as any).TextDecoder;
+    raw =
+      bodyJson instanceof Uint8Array && TD
+        ? new TD().decode(bodyJson)
+        : typeof bodyJson === 'string'
+        ? bodyJson
+        : '';
+  } catch {}
+  if (!raw) {
+    return 'New message';
+  }
+  try {
+    return bodyText(JSON.parse(raw), raw);
+  } catch {
+    return raw; // plain-text body
+  }
+}
+
+/** bodyText picks the display text out of a decoded message body. */
+function bodyText(body: any, raw = JSON.stringify(body ?? {})): string {
+  const text = body?.text ?? body?.body ?? body?.message;
+  return typeof text === 'string' && text ? text : raw;
+}
+
+const HISTORY_STATUS: Record<ApiMessage['status'], InboxStatus | null> = {
+  queued: null,
+  expired: null,
+  delivered: 'delivered',
+  read: 'read',
+  acknowledged: 'acknowledged',
+  dismissed: 'dismissed',
+};
+
+/** historyRow maps a GET /v1/agent/messages row onto the inbox. */
+function historyRow(m: ApiMessage): Inbox.HistoryRow {
+  // sender_type 'agent' means this device sent it back to the operator.
+  const outgoing = m.sender_type === 'agent';
+  return {
+    id: m.id,
+    kind: m.kind,
+    sender: outgoing ? 'You' : m.sender_name || 'Support',
+    text: bodyText(m.body),
+    templateId: m.template_id || undefined,
+    receivedAt: Date.parse(m.created_at) || Date.now(),
+    expiresAt: m.expires_at ? Date.parse(m.expires_at) : undefined,
+    serverStatus: HISTORY_STATUS[m.status],
+    expired: m.status === 'expired',
+    outgoing,
+  };
+}
+
 export class AgentController {
   private signal: SignalClient;
   private screen = new ScreenShare();
@@ -102,6 +179,10 @@ export class AgentController {
   private sessions = new Map<string, SessionMeta>();
   private state: ControllerState;
   private listeners = new Set<(s: ControllerState) => void>();
+  private api: Api;
+  private deviceToken: () => Promise<DeviceToken>;
+  private cachedToken: DeviceToken | null = null;
+  private historyUnsupported = false;
 
   constructor(
     private config: AppConfig,
@@ -111,6 +192,8 @@ export class AgentController {
   ) {
     const api = new Api(config.apiBaseUrl);
     const baseProvider = makeTokenProvider(api, identity);
+    this.api = api;
+    this.deviceToken = baseProvider;
     // A gateway override in settings wins over the URL the API returns.
     const tokenProvider = async () => {
       const t = await baseProvider();
@@ -145,11 +228,21 @@ export class AgentController {
       onRekeyRequest: r => log.info('ctrl', `rekey requested: ${r?.reason || ''}`),
       onCommand: c => void this.onCommand(c),
       onCredentialDelivery: d => this.onCredentialDelivery(d),
-      onMessage: m => this.onMessage(m),
+      onMessage: m => void this.onMessage(m),
       onGatewayError: (code, msg) => log.warn('ctrl', `gateway error ${code}: ${msg}`),
     };
 
     this.signal = new SignalClient(tokenProvider, agentInfo, events);
+
+    // When capture fully stops (last viewer left, or the system ended it), drop
+    // the persistent hold so the next session re-establishes it (and, if the OS
+    // interrupted it, re-prompts once) instead of silently staying off.
+    this.screen.onStopped = () => {
+      if (this.screenHeld || this.state.sharing || this.state.screenActive) {
+        this.screenHeld = false;
+        this.patch({sharing: false, screenActive: false});
+      }
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -249,6 +342,8 @@ export class AgentController {
 
   private onRegistered(deviceId: string, inventoryRequested: boolean) {
     this.patch({deviceId});
+    void this.flushMessageAcks();
+    void this.refreshHistory();
     if (inventoryRequested) {
       this.signal.sendInventoryReport(
         1,
@@ -361,9 +456,25 @@ export class AgentController {
     this.peers.set(pid, peer);
 
     try {
+      // Screen capture (MediaProjection) needs a resumed Activity. A hidden /
+      // background agent has none, so bring MainActivity to the foreground first
+      // (a Device Owner may start it from the background) and give it a moment to
+      // resume before capturing. Skipped once a capture is already held.
+      if (!this.screen.active) {
+        await DeviceManagement.launchAgentActivity();
+        await new Promise<void>(resolve => setTimeout(() => resolve(), 800));
+      }
       log.info('ctrl', 'acquiring screen capture for the session');
       const stream = await this.screen.acquire();
-      this.patch({screenActive: this.screen.active});
+      // One-time-permission behaviour: keep the capture alive after this session
+      // so later connections reuse it instead of re-prompting. The owner only
+      // ever approves the system prompt on this first connection.
+      if (this.config.autoShareScreen && !this.screenHeld) {
+        await this.screen.acquire(); // extra retained reference, no new prompt
+        this.screenHeld = true;
+        log.info('ctrl', 'holding screen capture for future sessions (one-time grant)');
+      }
+      this.patch({screenActive: this.screen.active, sharing: this.screenHeld});
       // The track is attached inside answer(), after setRemoteDescription.
       const answerSdp = await peer.answer(o.sdp, stream);
       this.signal.sendSessionAnswer(sessionId, pid, answerSdp);
@@ -476,35 +587,154 @@ export class AgentController {
     this.publishParticipants();
   }
 
-  private onMessage(m: SignalMsg) {
-    log.info('ctrl', `message ${m.message_id} received`);
-    // Decode the body_json blob and surface it as a local notification.
-    let title = m.sender_name ? String(m.sender_name) : 'Remote message';
-    let body = '';
-    try {
-      const TD = (globalThis as any).TextDecoder;
-      const raw =
-        m.body_json instanceof Uint8Array && TD
-          ? new TD().decode(m.body_json)
-          : typeof m.body_json === 'string'
-          ? m.body_json
-          : '';
-      if (raw) {
-        try {
-          const obj = JSON.parse(raw);
-          body = String(obj.body ?? obj.text ?? obj.message ?? raw);
-          if (obj.title) {
-            title = String(obj.title);
-          }
-        } catch {
-          body = raw; // plain-text body
-        }
-      }
-    } catch {}
-    if (body) {
-      void DeviceData.notify(title, body);
+  /**
+   * onMessage handles an out-of-session message (docs/gateway.md C6). The
+   * gateway redelivers every still-queued message on each connect, so it is
+   * deduped on message_id; a redelivery only re-sends the current status.
+   */
+  private async onMessage(m: SignalMsg) {
+    const id = String(m?.message_id ?? '');
+    if (!id || id === '0') {
+      return;
     }
-    this.signal.sendMessageAck(Number(m.message_id), MessageStatus.DELIVERED);
+    await Inbox.loadInbox();
+    const kind = MESSAGE_KINDS[Number(m.kind)] || 'chat';
+    const sender = m.sender_name ? String(m.sender_name) : 'Support';
+    const text = messageText(m.body_json);
+    const expiresAt =
+      m.expires_at?.seconds !== undefined ? Number(m.expires_at.seconds) * 1000 : undefined;
+
+    const isNew = Inbox.receive({
+      id,
+      kind,
+      sender,
+      text,
+      templateId: m.template_id || undefined,
+      receivedAt: Date.now(),
+      expiresAt,
+    });
+    if (!isNew) {
+      log.info('ctrl', `message ${id} redelivered`);
+      this.syncMessage(id);
+      return;
+    }
+    log.info('ctrl', `message ${id} (${kind}) from ${sender}`);
+    this.syncMessage(id);
+
+    void DeviceData.notify(sender, text);
+    pushNotif({
+      id: `msg_${id}`,
+      kind: 'message',
+      title: kind === 'chat' ? `Message from ${sender}` : sender,
+      body: text,
+      ts: Date.now(),
+    });
+  }
+
+  /**
+   * updateMessage records what the person at the device did with a message
+   * (read, acknowledged, dismissed) and reports it to the operator.
+   */
+  updateMessage(id: string, status: 'read' | 'acknowledged' | 'dismissed'): void {
+    if (Inbox.advance(id, status)) {
+      this.syncMessage(id);
+    }
+  }
+
+  /** syncMessage sends a message's status if the gateway has not been told it yet. */
+  private syncMessage(id: string) {
+    const msg = Inbox.getInboxMessage(id);
+    if (!msg || msg.synced === msg.status) {
+      return;
+    }
+    if (this.signal.sendMessageAck(Number(id), ACK_STATUS[msg.status])) {
+      Inbox.markSynced(id, msg.status);
+    }
+  }
+
+  /**
+   * refreshHistory loads the newest page of this device's message history
+   * (GET /v1/agent/messages) so messages sent before this install, or that
+   * the device missed, appear in the inbox.
+   */
+  async refreshHistory(): Promise<void> {
+    await this.loadHistory(undefined);
+  }
+
+  /** loadOlderHistory loads the next older page, if there is one. */
+  async loadOlderHistory(): Promise<void> {
+    const {cursor} = Inbox.getHistoryState();
+    if (cursor) {
+      await this.loadHistory(cursor);
+    }
+  }
+
+  private async loadHistory(cursor: string | undefined) {
+    // An API without GET /v1/agent/messages (older deploy) is asked once per run.
+    if (Inbox.getHistoryState().loading || this.historyUnsupported) {
+      return;
+    }
+    Inbox.setHistoryState({loading: true, error: null});
+    try {
+      await Inbox.loadInbox();
+      const page = await this.api.messages(await this.jwt(), cursor);
+      Inbox.mergeHistory(page.data.map(historyRow));
+      // A refresh only moves the cursor before the first load; after that the
+      // older pages already reached stay reachable.
+      const prev = Inbox.getHistoryState().cursor;
+      Inbox.setHistoryState({
+        loading: false,
+        cursor: cursor || prev === undefined ? page.next_cursor : prev,
+      });
+      // Rows the server still holds as queued need their delivered ack.
+      void this.flushMessageAcks();
+    } catch (e: any) {
+      if (e instanceof ApiError && e.status === 404 && e.message === 'no such endpoint') {
+        this.historyUnsupported = true;
+        log.warn('ctrl', 'message history is not available on this server; showing live messages only');
+        Inbox.setHistoryState({loading: false, cursor: null, error: null});
+        return;
+      }
+      log.warn('ctrl', `message history failed: ${e?.message || e}`);
+      Inbox.setHistoryState({loading: false, error: 'Could not load message history'});
+    }
+  }
+
+  /**
+   * sendToOperator sends a chat message from this device to its operators over
+   * the signalling socket (SignalMessage.message_send) and echoes it into the
+   * inbox as an outgoing bubble. The gateway assigns the real id and persists
+   * it; the echo is reconciled when history next loads. Throws if the socket is
+   * not connected so the UI can surface it.
+   */
+  async sendToOperator(text: string): Promise<void> {
+    const body = text.trim();
+    if (!body) {
+      return;
+    }
+    if (!this.signal.sendMessage(body)) {
+      throw new Error('Not connected — your message will send once you are back online.');
+    }
+    await Inbox.loadInbox();
+    Inbox.addOutgoing({kind: 'chat', sender: 'You', text: body, receivedAt: Date.now()});
+  }
+
+  /** jwt returns a device JWT for the agent API, reusing one with time left. */
+  private async jwt(): Promise<string> {
+    const t = this.cachedToken;
+    if (t && t.expiresAt - Date.now() > 120000) {
+      return t.token;
+    }
+    this.cachedToken = await this.deviceToken();
+    return this.cachedToken.token;
+  }
+
+  /** flushMessageAcks re-sends statuses that changed while the socket was down. */
+  private async flushMessageAcks() {
+    await Inbox.loadInbox();
+    for (const msg of Inbox.unsynced()) {
+      this.syncMessage(msg.id);
+    }
   }
 
   private async onCommand(c: SignalMsg) {

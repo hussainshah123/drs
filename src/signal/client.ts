@@ -226,10 +226,11 @@ export class SignalClient {
   // Outbound
   // -------------------------------------------------------------------------
 
-  private rawSend(payload: SignalMsg) {
+  /** rawSend writes one frame; it returns false when the socket is not open. */
+  private rawSend(payload: SignalMsg): boolean {
     const ws = this.ws;
     if (!ws || ws.readyState !== 1) {
-      return;
+      return false;
     }
     this.seq += 1;
     const msg: SignalMsg = {seq: this.seq, sent_at: nowTimestamp(), ...payload};
@@ -247,8 +248,10 @@ export class SignalClient {
         bytes.byteOffset + bytes.byteLength,
       ) as ArrayBuffer;
       ws.send(buf as any);
+      return true;
     } catch (e: any) {
       log.error('signal', `encode/send failed: ${e?.message || e}`);
+      return false;
     }
   }
 
@@ -362,8 +365,22 @@ export class SignalClient {
     });
   }
 
-  sendMessageAck(messageId: number, status: number) {
-    this.rawSend({message_ack: {message_id: messageId, status}});
+  /** sendMessageAck reports a message status; false means it was not sent. */
+  sendMessageAck(messageId: number, status: number): boolean {
+    return this.rawSend({message_ack: {message_id: messageId, status}});
+  }
+
+  /**
+   * sendMessage sends a chat message from this device to its operators over the
+   * signalling socket (SignalMessage.message_send). false means the socket was
+   * not open, so the caller should surface a "not connected" error.
+   */
+  sendMessage(text: string): boolean {
+    // TextEncoder is provided by src/polyfills.ts at runtime (Hermes lacks it).
+    const bodyJson: Uint8Array = new (globalThis as any).TextEncoder().encode(
+      JSON.stringify({text}),
+    );
+    return this.rawSend({message_send: {body_json: bodyJson}});
   }
 
   sendTransportReport(
@@ -538,6 +555,8 @@ function describeFrame(key: string, msg: SignalMsg): string {
       return `  — ${msg.session_ended?.reason || ''}`;
     case 'command':
       return `  — kind ${msg.command?.kind}`;
+    case 'message':
+      return `  — id ${msg.message?.message_id} kind ${msg.message?.kind}`;
     case 'error':
       return `  — ${msg.error?.code}: ${msg.error?.message}`;
     default:

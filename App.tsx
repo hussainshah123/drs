@@ -29,9 +29,13 @@ import {
   type Identity,
 } from './src/core/storage';
 import {AGENT_VERSION, defaultHostname, osVersion} from './src/core/deviceInfo';
+import {requestStartupPermissions} from './src/core/permissions';
+import {DeviceManagement} from './src/native/deviceManagement';
+import {log} from './src/core/log';
 import {AgentController} from './src/agent/controller';
 import {IosScreenPicker} from './src/webrtc/iosPicker';
 import {MainTabs} from './src/screens/MainTabs';
+import {clearInbox} from './src/messages/store';
 
 // Module-level singleton so React dev double-mounts / re-renders never create a
 // second controller (two signal connections fight over the same device: the
@@ -51,7 +55,19 @@ function App(): React.JSX.Element {
   // Load persisted state once.
   useEffect(() => {
     (async () => {
+      // Request runtime permissions at boot — not after enrolment — so a Device
+      // Owner (MDM) install grants them silently before anything else, and normal
+      // installs prompt once up front.
+      void requestStartupPermissions();
       const cfg = await loadConfig();
+      // On a Device Owner (MDM) install, run as a managed agent: block uninstall,
+      // disable force-stop, and (per config) hide the launcher icon. No-op on a
+      // normal device, so a sideloaded install keeps its icon and can be removed.
+      void DeviceManagement.applyManagedAgentPolicy(cfg.managedHideIcon).then(r => {
+        if (r.deviceOwner) {
+          log.info('mdm', `managed agent policy applied: ${JSON.stringify(r)}`);
+        }
+      });
       const id = await loadIdentity();
       setConfig(cfg);
       setIdentity(id);
@@ -92,6 +108,10 @@ function App(): React.JSX.Element {
     activeKey = key;
     controllerRef.current = controller;
     controller.start();
+    // Keep the agent alive in the background: a foreground service stops Android
+    // killing the process when the app is swiped from recents or backgrounded, so
+    // the device stays online and remotely viewable.
+    void DeviceManagement.startAgentService();
     setCtrlTick(t => t + 1);
     // No cleanup that stops the controller: re-renders/double-mounts must not
     // kill the live connection. Teardown happens in onUnenroll / onSaveSettings.
@@ -114,7 +134,9 @@ function App(): React.JSX.Element {
           activeController = null;
           activeKey = '';
           controllerRef.current = null;
+          void DeviceManagement.stopAgentService();
           await clearIdentity();
+          await clearInbox();
           setIdentity(null);
           setRoute('enroll');
         },

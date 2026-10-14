@@ -13,6 +13,7 @@
  * everything once.
  */
 import {PermissionsAndroid, Platform} from 'react-native';
+import {DeviceManagement} from '../native/deviceManagement';
 import {RemoteControl} from '../native/remoteControl';
 import {log} from './log';
 
@@ -30,6 +31,14 @@ export async function requestStartupPermissions(): Promise<void> {
     return;
   }
   try {
+    // On a Device Owner (MDM) install, grant our runtime permissions silently so
+    // the end user is never prompted. A no-op (0) on normal devices, where the
+    // requestMultiple() prompt below still applies.
+    const granted = await DeviceManagement.grantRuntimePermissions();
+    if (granted > 0) {
+      log.info('perm', `device owner: silently granted ${granted} runtime permission(s)`);
+    }
+
     const toRequest: string[] = [];
     // POST_NOTIFICATIONS is required on Android 13+ for the screen-share
     // foreground-service notification.

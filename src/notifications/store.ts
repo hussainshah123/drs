@@ -29,7 +29,7 @@ function seed(): Notif[] {
 }
 
 let items: Notif[] = seed();
-let loaded = false;
+let loaded: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -46,25 +46,27 @@ async function persist() {
   }
 }
 
-export async function loadNotifs(): Promise<void> {
-  if (loaded) {
-    return;
-  }
-  loaded = true;
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Notif[];
-      if (Array.isArray(parsed)) {
-        items = parsed;
-        emit();
+/** loadNotifs reads the persisted list once; later calls share the same load. */
+export function loadNotifs(): Promise<void> {
+  if (!loaded) {
+    loaded = (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Notif[];
+          if (Array.isArray(parsed)) {
+            items = parsed;
+            emit();
+          }
+        } else {
+          await persist();
+        }
+      } catch {
+        // keep seed
       }
-    } else {
-      await persist();
-    }
-  } catch {
-    // keep seed
+    })();
   }
+  return loaded;
 }
 
 export function subscribeNotifs(cb: () => void): () => void {
@@ -78,6 +80,18 @@ export function getNotifs(): Notif[] {
 
 export function unreadCount(): number {
   return items.reduce((n, x) => n + (x.read ? 0 : 1), 0);
+}
+
+/** pushNotif adds an unread notification; an id already present is ignored. */
+export function pushNotif(n: Omit<Notif, 'read'>): void {
+  void loadNotifs().then(() => {
+    if (items.some(x => x.id === n.id)) {
+      return;
+    }
+    items.push({...n, read: false});
+    void persist();
+    emit();
+  });
 }
 
 export function markRead(id: string): void {

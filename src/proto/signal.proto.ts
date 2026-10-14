@@ -57,6 +57,7 @@ message SignalMessage {
 
     Message message = 70;
     MessageAck message_ack = 71;
+    MessageSend message_send = 72;
 
     CredentialDelivery credential_delivery = 80;
     CredentialDeliveryAck credential_delivery_ack = 81;
@@ -335,6 +336,10 @@ message Message {
 message MessageAck {
   int64 message_id = 1;
   MessageStatus status = 2;
+}
+
+message MessageSend {
+  bytes body_json = 1;
 }
 
 message CredentialDelivery {

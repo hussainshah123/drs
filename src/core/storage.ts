@@ -24,6 +24,20 @@ export type AppConfig = {
   forceRelay: boolean;
   /** Unattended devices answer sessions without prompting the end user. */
   autoAcceptConsent: boolean;
+  /**
+   * Keep the screen capture alive after the first session so the operator can
+   * reconnect without the device re-showing the system capture prompt. The owner
+   * approves once (on the first connection); after that it behaves like a
+   * one-time permission. Turning it off reverts to prompting per session.
+   */
+  autoShareScreen: boolean;
+  /**
+   * On a Device Owner (MDM) install, apply the managed-agent profile at launch:
+   * block uninstall, disable force-stop, and hide the launcher icon so the agent
+   * runs invisibly. Ignored on non-owner devices. Hiding the icon only takes
+   * effect when this is true AND the app is Device Owner.
+   */
+  managedHideIcon: boolean;
 };
 
 /**
@@ -40,6 +54,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
   forceRelay: false,
   autoAcceptConsent: true,
+  autoShareScreen: true,
+  managedHideIcon: true,
 };
 
 export type Identity = {

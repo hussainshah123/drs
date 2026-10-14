@@ -23,6 +23,8 @@ export function SettingsScreen({
   const [iceText, setIceText] = useState(JSON.stringify(config.iceServers, null, 2));
   const [relay, setRelay] = useState(config.forceRelay);
   const [auto, setAuto] = useState(config.autoAcceptConsent);
+  const [holdShare, setHoldShare] = useState(config.autoShareScreen);
+  const [hideIcon, setHideIcon] = useState(config.managedHideIcon);
 
   const save = async () => {
     let iceServers = config.iceServers;
@@ -42,6 +44,8 @@ export function SettingsScreen({
       iceServers,
       forceRelay: relay,
       autoAcceptConsent: auto,
+      autoShareScreen: holdShare,
+      managedHideIcon: hideIcon,
     };
     await saveConfig(next);
     onSave(next);
@@ -86,6 +90,26 @@ export function SettingsScreen({
             <P dim>Unattended devices answer without prompting the end user.</P>
           </View>
           <Switch value={auto} onValueChange={setAuto} />
+        </Row>
+        <Row>
+          <View style={{flex: 1, paddingRight: 12}}>
+            <Text style={styles.switchLabel}>Keep screen sharing granted</Text>
+            <P dim>
+              Approve the capture prompt once on the first connection; after that
+              operators reconnect without asking again (like a camera permission).
+            </P>
+          </View>
+          <Switch value={holdShare} onValueChange={setHoldShare} />
+        </Row>
+        <Row>
+          <View style={{flex: 1, paddingRight: 12}}>
+            <Text style={styles.switchLabel}>Run as hidden managed agent</Text>
+            <P dim>
+              On an MDM (Device Owner) device: hide the launcher icon, block
+              uninstall and force-stop. Ignored on normal devices.
+            </P>
+          </View>
+          <Switch value={hideIcon} onValueChange={setHideIcon} />
         </Row>
       </Card>
 

@@ -7,10 +7,14 @@
     <!-- Screen capture foreground service (react-native-webrtc MediaProjectionService). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Keeps the agent alive in the background so the device stays online. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Reboot is a signature|privileged permission; only honoured when this app
          is the Device Owner. Declared so the DevicePolicyManager.reboot() call is
          valid; the OS still gates it on device-owner status. -->
     <uses-permission android:name="android.permission.REBOOT" />
+    <!-- Start the hidden agent after reboot (managed devices have no launcher icon). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
       android:name=".MainApplication"
@@ -27,12 +31,48 @@
         android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
         android:launchMode="singleTask"
         android:windowSoftInputMode="adjustResize"
+        android:exported="true" />
+
+      <!-- The launcher icon lives on an alias, not on MainActivity, so a Device
+           Owner can hide it (PackageManager.setComponentEnabledSetting) without
+           disabling the activity itself — the agent then runs with no drawer icon
+           but can still be started programmatically (boot, service, am start). -->
+      <activity-alias
+        android:name=".LauncherAlias"
+        android:targetActivity=".MainActivity"
+        android:label="@string/app_name"
         android:exported="true">
         <intent-filter>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
-      </activity>
+      </activity-alias>
+
+      <!-- Persistent foreground service that keeps the agent process alive in the
+           background (survives recents-swipe / backgrounding) so the device stays
+           online and remotely viewable. -->
+      <service
+        android:name=".remote.AgentService"
+        android:exported="false"
+        android:foregroundServiceType="specialUse">
+        <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="remote_device_management_agent" />
+      </service>
+
+      <!-- Restarts the agent on boot so a hidden managed install comes back online
+           by itself (no launcher icon to tap). Device Owner may start it from the
+           background; a normal install's start may be blocked, which is fine. -->
+      <receiver
+        android:name=".remote.BootReceiver"
+        android:enabled="true"
+        android:exported="true">
+        <intent-filter android:priority="999">
+          <action android:name="android.intent.action.BOOT_COMPLETED" />
+          <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+          <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+        </intent-filter>
+      </receiver>
 
       <!-- DPC / Device Owner component (DevicePolicyManager admin). On a company-
            owned device this is provisioned as Device Owner via Android Enterprise

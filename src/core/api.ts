@@ -40,6 +40,21 @@ export type AgentConfig = {
   protocol_version: string;
 };
 
+export type Page<T> = {data: T[]; next_cursor: string | null};
+
+/** A messages row (services/api/internal/messages.Message). */
+export type ApiMessage = {
+  id: string;
+  kind: 'chat' | 'banner' | 'tray' | 'fullscreen';
+  template_id: string | null;
+  sender_type: string;
+  sender_name: string | null;
+  body: {[key: string]: unknown} | null;
+  status: 'queued' | 'delivered' | 'read' | 'acknowledged' | 'dismissed' | 'expired';
+  created_at: string;
+  expires_at: string | null;
+};
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -80,6 +95,13 @@ export class Api {
   async config(deviceJwt: string): Promise<AgentConfig> {
     return this.get<AgentConfig>('/v1/agent/config', deviceJwt);
   }
+
+  /** messages pages this device's message history, newest first. */
+  async messages(deviceJwt: string, cursor?: string, limit = 50): Promise<Page<ApiMessage>> {
+    const q = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    return this.get<Page<ApiMessage>>(`/v1/agent/messages?${q}`, deviceJwt);
+  }
+
 
   private async get<T>(path: string, bearer?: string): Promise<T> {
     return this.request<T>('GET', path, undefined, bearer);

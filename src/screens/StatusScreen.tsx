@@ -13,7 +13,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import {Avatar, Button, Card, H2, Label, Logo, P, Pill, Row, StatusRow} from '../ui/components';
@@ -151,7 +150,7 @@ export function StatusScreen({controller}: {controller: AgentController}) {
             <P dim>
               {state.sharing
                 ? 'Screen sharing is ON. Operators can view this device now — you can switch apps; capture keeps running.'
-                : 'Tap below once (with this app open) and approve “Start now”. Sharing then stays on in the background, so operators can connect anytime without a new prompt.'}
+                : 'You only approve the capture prompt once — on the first connection. After that it stays granted (like a camera permission), so operators reconnect without asking again. You can also pre-approve it now with the button below.'}
             </P>
             <Button
               title={

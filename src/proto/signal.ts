@@ -59,6 +59,14 @@ export const Transport = {
   BRIDGE: 4,
 } as const;
 
+export const MessageKind = {
+  UNSPECIFIED: 0,
+  CHAT: 1,
+  BANNER: 2,
+  TRAY: 3,
+  FULLSCREEN: 4,
+} as const;
+
 export const MessageStatus = {
   UNSPECIFIED: 0,
   DELIVERED: 1,

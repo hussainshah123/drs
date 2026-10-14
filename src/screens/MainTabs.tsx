@@ -9,7 +9,9 @@ import {T} from '../ui/theme';
 import {Icon, type IconName} from '../ui/Icon';
 import {StatusScreen} from './StatusScreen';
 import {PermissionsScreen} from './PermissionsScreen';
-import {ChatApp} from '../chat/ChatApp';
+import {InboxScreen} from '../messages/InboxScreen';
+import {MessageOverlay} from '../messages/MessageOverlay';
+import {loadInbox, subscribeInbox, unreadInboxCount} from '../messages/store';
 import {NotificationsScreen} from '../notifications/NotificationsScreen';
 import {loadNotifs, subscribeNotifs, unreadCount} from '../notifications/store';
 import type {AgentController} from '../agent/controller';
@@ -37,10 +39,19 @@ export function MainTabs({
 
   useEffect(() => {
     void loadNotifs().then(bump);
-    return subscribeNotifs(bump);
+    void loadInbox().then(bump);
+    const offNotifs = subscribeNotifs(bump);
+    const offInbox = subscribeInbox(bump);
+    return () => {
+      offNotifs();
+      offInbox();
+    };
   }, []);
 
-  const unread = unreadCount();
+  const badges: Partial<Record<TabKey, number>> = {
+    messages: unreadInboxCount(),
+    alerts: unreadCount(),
+  };
 
   let screen: React.ReactNode = null;
   switch (tab) {
@@ -48,7 +59,7 @@ export function MainTabs({
       screen = <StatusScreen controller={controller} />;
       break;
     case 'messages':
-      screen = <ChatApp onExit={() => setTab('home')} />;
+      screen = <InboxScreen controller={controller} />;
       break;
     case 'alerts':
       screen = <NotificationsScreen />;
@@ -70,7 +81,7 @@ export function MainTabs({
       <View style={styles.tabBar}>
         {TABS.map(t => {
           const active = tab === t.key;
-          const badge = t.key === 'alerts' ? unread : 0;
+          const badge = badges[t.key] || 0;
           return (
             <TouchableOpacity
               key={t.key}
@@ -92,6 +103,7 @@ export function MainTabs({
           );
         })}
       </View>
+      <MessageOverlay controller={controller} onOpenInbox={() => setTab('messages')} />
     </View>
   );
 }

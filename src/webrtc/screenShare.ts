@@ -18,6 +18,9 @@ export class ScreenShare {
   private refCount = 0;
   private starting: Promise<MediaStream> | null = null;
 
+  /** Called when the capture fully stops (last release, or ended by the system). */
+  onStopped: (() => void) | null = null;
+
   /** active is true while the screen is being captured. */
   get active(): boolean {
     return this.stream != null;
@@ -75,6 +78,7 @@ export class ScreenShare {
 
   private forceStop(): void {
     this.refCount = 0;
+    const wasActive = this.stream != null;
     if (this.stream) {
       this.stream.getTracks().forEach((t: MediaStreamTrack) => {
         try {
@@ -84,5 +88,8 @@ export class ScreenShare {
       this.stream = null;
     }
     log.info('screen', 'screen capture stopped');
+    if (wasActive) {
+      this.onStopped?.();
+    }
   }
 }
