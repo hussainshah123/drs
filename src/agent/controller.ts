@@ -171,6 +171,7 @@ export class AgentController {
   private signal: SignalClient;
   private screen = new ScreenShare();
   private screenHeld = false;
+  private streamingWakeLock = false;
   private peers = new Map<number, Peer>();
   private perms = new Map<number, number>(); // participantId -> permission bitmask
   private names = new Map<number, string>();
@@ -326,6 +327,22 @@ export class AgentController {
     }
   }
 
+  private setStreamingActive(active: boolean): void {
+    if (!DeviceManagement.available() || this.streamingWakeLock === active) {
+      return;
+    }
+    this.streamingWakeLock = active;
+    DeviceManagement.setStreamingActive(active)
+      .then(ok => {
+        if (!ok && active) {
+          log.warn('ctrl', 'could not keep the CPU awake during screen streaming');
+        }
+      })
+      .catch(e => {
+        log.error('ctrl', `screen streaming power management failed: ${e?.message || e}`);
+      });
+  }
+
   respondConsent(granted: boolean): void {
     const c = this.state.pendingConsent;
     if (!c) {
@@ -454,6 +471,7 @@ export class AgentController {
       },
     );
     this.peers.set(pid, peer);
+    this.setStreamingActive(true);
 
     try {
       // Screen capture (MediaProjection) needs a resumed Activity. A hidden /
@@ -858,6 +876,7 @@ export class AgentController {
       peer.close();
       this.peers.delete(pid);
       this.screen.release();
+      this.setStreamingActive(this.peers.size > 0);
     }
     this.connected.delete(pid);
     forgetInput(pid);
@@ -874,6 +893,7 @@ export class AgentController {
     this.names.clear();
     this.sessionOf.clear();
     this.sessions.clear();
+    this.setStreamingActive(false);
     // Fully release the screen, including any held sharing reference.
     this.screenHeld = false;
     while (this.screen.active) {

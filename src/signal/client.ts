@@ -6,7 +6,7 @@
  *   - Open the gateway WebSocket (subprotocol "drs.signal.v1", binary frames).
  *   - Send Register with the device JWT, handle Registered.
  *   - Heartbeat at the interval the gateway sets; refresh the token before expiry.
- *   - Reconnect with exponential backoff, surfacing 4001/4003 as fatal.
+ *   - Reconnect with exponential backoff; stop when replaced by a newer client.
  *   - Decode inbound SignalMessages and hand them to the orchestrator via events;
  *     provide typed send helpers for the WebRTC and control layers.
  *
@@ -68,8 +68,10 @@ export class SignalClient {
   private seq = 0;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private backoff = 1000;
   private stopped = false;
+  private connecting = false;
   private status: SignalStatus = 'idle';
   private activeSessions = new Set<string>();
   private startedAt = Date.now();
@@ -82,6 +84,9 @@ export class SignalClient {
 
   /** start opens the connection and keeps it up until stop(). */
   start(): void {
+    if (!this.stopped && (this.connecting || this.ws || this.reconnectTimer)) {
+      return;
+    }
     this.stopped = false;
     this.backoff = 1000;
     void this.connect();
@@ -91,11 +96,17 @@ export class SignalClient {
   stop(): void {
     this.stopped = true;
     this.clearTimers();
-    if (this.ws) {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.connecting = false;
+    const ws = this.ws;
+    this.ws = null;
+    if (ws) {
       try {
-        this.ws.close(1000, 'client stop');
+        ws.close(1000, 'client stop');
       } catch {}
-      this.ws = null;
     }
     this.setStatus('closed');
   }
@@ -130,18 +141,21 @@ export class SignalClient {
   }
 
   private async connect(): Promise<void> {
-    if (this.stopped) {
+    if (this.stopped || this.connecting || this.ws) {
       return;
     }
+    this.connecting = true;
     this.setStatus(this.backoff > 1000 ? 'reconnecting' : 'connecting');
     let tok: DeviceToken;
     try {
       tok = await this.getToken();
     } catch (e: any) {
+      this.connecting = false;
       log.error('signal', `token fetch failed: ${e?.message || e}`);
       this.scheduleReconnect();
       return;
     }
+    this.connecting = false;
     // The token fetch is async; if stop() ran meanwhile, do not open a socket
     // (it would duplicate a newer connection and trigger a 4004 ping-pong).
     if (this.stopped) {
@@ -167,34 +181,52 @@ export class SignalClient {
     this.seq = 0;
 
     ws.onopen = () => {
+      if (this.ws !== ws || this.stopped) {
+        return;
+      }
       log.info('signal', 'socket open, sending Register');
       this.sendRegister(tok.token);
       this.scheduleRefresh(tok.expiresAt);
     };
-    ws.onmessage = ev => this.onMessage(ev.data);
+    ws.onmessage = ev => {
+      if (this.ws === ws && !this.stopped) {
+        this.onMessage(ev.data);
+      }
+    };
     ws.onerror = (ev: any) => {
+      if (this.ws !== ws || this.stopped) {
+        return;
+      }
       log.warn('signal', `socket error: ${ev?.message || 'error'}`);
     };
-    ws.onclose = (ev: any) => this.onClose(ev?.code ?? 1006, ev?.reason ?? '');
+    ws.onclose = (ev: any) => {
+      if (this.ws !== ws) {
+        return;
+      }
+      this.ws = null;
+      this.onClose(ev?.code ?? 1006, ev?.reason ?? '');
+    };
   }
 
   private scheduleReconnect() {
     this.clearTimers();
     this.ws = null;
-    if (this.stopped) {
+    if (this.stopped || this.reconnectTimer) {
       return;
     }
     this.setStatus('reconnecting');
     const wait = this.backoff;
     this.backoff = Math.min(this.backoff * 2, 30000);
     log.info('signal', `reconnecting in ${Math.round(wait / 1000)}s`);
-    setTimeout(() => this.connect(), wait);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, wait);
   }
 
   private onClose(code: number, reason: string) {
     log.warn('signal', `socket closed ${code} ${reason || ''}`);
     this.clearTimers();
-    this.ws = null;
     if (this.stopped) {
       this.setStatus('closed');
       return;
@@ -206,17 +238,18 @@ export class SignalClient {
       this.stopped = true;
       return;
     }
-    // 4004 = replaced by a newer connection of the same device. With the
-    // single-controller guarantee there is no competing instance of ours, so
-    // this is a stale/zombie connection on the gateway (e.g. left by a JS
-    // reload). Reconnect after a short, fixed delay to re-establish cleanly —
-    // the zombie will not fight back, so there is no ping-pong.
+    // 4004 means another connection for this device is already authoritative.
+    // Reconnecting here lets stale app instances continually replace the
+    // current connection, causing a 4004 ping-pong and interrupting sessions.
     if (code === 4004) {
-      log.warn('signal', 'replaced by a newer connection; reconnecting in 3s');
+      log.warn('signal', 'replaced by a newer connection; stopping this stale client');
       this.clearTimers();
-      this.ws = null;
-      this.setStatus('reconnecting');
-      setTimeout(() => this.connect(), 3000);
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.stopped = true;
+      this.setStatus('closed');
       return;
     }
     this.scheduleReconnect();
@@ -527,12 +560,21 @@ export class SignalClient {
     }
     const wait = Math.max(expiresAt - Date.now() - 60000, 1000);
     this.refreshTimer = setTimeout(async () => {
+      if (this.stopped) {
+        return;
+      }
       try {
         const tok = await this.getToken();
+        if (this.stopped) {
+          return;
+        }
         this.sendTokenRefresh(tok.token);
         this.scheduleRefresh(tok.expiresAt);
         log.info('signal', 'token refreshed');
       } catch (e: any) {
+        if (this.stopped) {
+          return;
+        }
         log.warn('signal', `token refresh failed: ${e?.message || e}`);
         this.scheduleRefresh(Date.now() + 60000);
       }

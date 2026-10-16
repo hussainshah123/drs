@@ -25,6 +25,7 @@ type DeviceManagementNative = {
   setUserControlDisabled(disabled: boolean): Promise<boolean>;
   applyManagedAgentPolicy(hideIcon: boolean): Promise<ManagedPolicyResult>;
   startAgentService(): Promise<boolean>;
+  setStreamingActive(active: boolean): Promise<boolean>;
   stopAgentService(): Promise<boolean>;
   launchAgentActivity(): Promise<boolean>;
 };
@@ -104,6 +105,10 @@ export const DeviceManagement = {
   /** Starts the background keep-alive foreground service (device stays online). */
   startAgentService(): Promise<boolean> {
     return Native ? Native.startAgentService() : Promise.resolve(false);
+  },
+  /** Holds a partial CPU wake lock while an operator is receiving a screen stream. */
+  setStreamingActive(active: boolean): Promise<boolean> {
+    return Native ? Native.setStreamingActive(active) : Promise.resolve(false);
   },
   /** Stops the background keep-alive service. */
   stopAgentService(): Promise<boolean> {

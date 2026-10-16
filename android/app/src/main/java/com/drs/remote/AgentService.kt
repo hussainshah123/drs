@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
 
 /**
  * Foreground service that keeps the agent alive in the background.
@@ -31,12 +33,20 @@ class AgentService : Service() {
         } else {
             startForeground(NOTIF_ID, notification())
         }
+        if (streamingActive) {
+            setStreamingWakeLock(this, true)
+        }
         return START_STICKY
     }
 
     // Swiping the app from recents must not stop the agent: keep running.
     override fun onTaskRemoved(rootIntent: Intent?) {
         // no stopSelf() on purpose
+    }
+
+    override fun onDestroy() {
+        setStreamingWakeLock(this, false)
+        super.onDestroy()
     }
 
     private fun notification(): Notification {
@@ -62,6 +72,10 @@ class AgentService : Service() {
     companion object {
         private const val CHANNEL = "drs_agent"
         private const val NOTIF_ID = 4201
+        private const val WAKE_LOCK_TAG = "drs:screen-stream"
+        @Volatile private var streamingActive = false
+        private val wakeLockGuard = Any()
+        private var streamingWakeLock: PowerManager.WakeLock? = null
 
         fun start(ctx: Context) {
             val i = Intent(ctx, AgentService::class.java)
@@ -72,8 +86,43 @@ class AgentService : Service() {
             }
         }
 
+        fun setStreamingActive(ctx: Context, active: Boolean) {
+            streamingActive = active
+            setStreamingWakeLock(ctx.applicationContext, active)
+        }
+
         fun stop(ctx: Context) {
+            streamingActive = false
+            setStreamingWakeLock(ctx.applicationContext, false)
             ctx.stopService(Intent(ctx, AgentService::class.java))
+        }
+
+        private fun setStreamingWakeLock(ctx: Context, enabled: Boolean) {
+            synchronized(wakeLockGuard) {
+                if (enabled) {
+                    if (streamingWakeLock?.isHeld == true) {
+                        return
+                    }
+                    val powerManager =
+                        ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                    streamingWakeLock = powerManager.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        WAKE_LOCK_TAG,
+                    ).apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+                    Log.i("AgentService", "screen stream CPU wake lock acquired")
+                } else {
+                    streamingWakeLock?.let {
+                        if (it.isHeld) {
+                            it.release()
+                        }
+                    }
+                    streamingWakeLock = null
+                    Log.i("AgentService", "screen stream CPU wake lock released")
+                }
+            }
         }
     }
 }

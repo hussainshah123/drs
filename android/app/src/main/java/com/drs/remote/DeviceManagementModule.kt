@@ -297,6 +297,17 @@ class DeviceManagementModule(private val reactCtx: ReactApplicationContext) :
         }
     }
 
+    /** Keeps the CPU awake only while a remote screen stream has an active peer. */
+    @ReactMethod
+    fun setStreamingActive(active: Boolean, promise: Promise) {
+        try {
+            AgentService.setStreamingActive(reactCtx, active)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("stream_wake_lock_failed", e)
+        }
+    }
+
     /**
      * Brings the agent's MainActivity to the foreground. Screen capture
      * (MediaProjection) needs a resumed Activity; a hidden/background agent has
