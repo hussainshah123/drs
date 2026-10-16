@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -15,7 +15,8 @@
 		6F5C5521D46A9F5893C5AD77 /* CFNetwork.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7046E2DC2CDEC78F383380B6 /* CFNetwork.framework */; };
 		74145A1C3526C8B789F914A4 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1C62DA11C0C36C400DB8EEB5 /* Foundation.framework */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
-		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		898FC54D3080F7CD00FC0F87 /* React.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 898FC54C3080F7CD00FC0F87 /* React.xcframework */; };
+		9C6B8D4A2F1E7A3B00D4C6E1 /* React.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 898FC54C3080F7CD00FC0F87 /* React.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B2CA88389DC2803C5FBC4420 /* DRSSocketConnection.m in Sources */ = {isa = PBXBuildFile; fileRef = BF5230BD22BE32BDB7FDA3F9 /* DRSSocketConnection.m */; };
 		C25E3A0F8AF6A2435543F42C /* ScreenShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1E32D77F506C56998D67CEA4 /* ScreenShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D194D729E90129E6B1087A18 /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 330DE6057C4699488C469EFB /* ReplayKit.framework */; };
@@ -46,6 +47,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9C6B8D492F1E7A3B00D4C6E1 /* Embed React Native Core Framework */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				9C6B8D4A2F1E7A3B00D4C6E1 /* React.xcframework in Embed Frameworks */,
+			);
+			name = "Embed React Native Core Framework";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -69,7 +81,7 @@
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = drs/AppDelegate.swift; sourceTree = "<group>"; };
 		7AB9B58E2EBC230BAC86014E /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
 		7AD8A010C026AC5125999D72 /* DRSSampleUploader.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = DRSSampleUploader.h; sourceTree = "<group>"; };
-		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = drs/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		898FC54C3080F7CD00FC0F87 /* React.xcframework */ = {isa = PBXFileReference; expectedSignature = "SelfSigned:BEEAE960B121B398BB228BD547298BD461DFFFD862BD3AD794A38F6D426F6741"; lastKnownFileType = wrapper.xcframework; name = React.xcframework; path = "Pods/React-Core-prebuilt/React.xcframework"; sourceTree = "<group>"; };
 		A1B839D31786CA2DC691626B /* ScreenShare.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = ScreenShare.entitlements; sourceTree = "<group>"; };
 		BF5230BD22BE32BDB7FDA3F9 /* DRSSocketConnection.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = DRSSocketConnection.m; sourceTree = "<group>"; };
 		CF9433FEE6687BC9A0EBF1D9 /* CoreImage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreImage.framework; path = System/Library/Frameworks/CoreImage.framework; sourceTree = SDKROOT; };
@@ -81,6 +93,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				898FC54D3080F7CD00FC0F87 /* React.xcframework in Frameworks */,
 				0C80B921A6F3F58F76C31292 /* libPods-drs.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -107,7 +120,6 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
-				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
 			);
 			name = drs;
@@ -116,6 +128,7 @@
 		2D16E6871FA4F8E400B85C8A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				898FC54C3080F7CD00FC0F87 /* React.xcframework */,
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-drs.a */,
 				73F0856B59151616328113BA /* iOS */,
@@ -204,6 +217,7 @@
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
+				9C6B8D492F1E7A3B00D4C6E1 /* Embed React Native Core Framework */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
 				2A98ADA0D43374AB34BD039D /* Embed Foundation Extensions */,
 			);
@@ -272,7 +286,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				300D88F2ED4CA0C9F13ABEEF /* PrivacyInfo.xcprivacy in Resources */,
 			);
@@ -312,9 +325,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-drs/Pods-drs-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-drs/Pods-drs-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -351,9 +368,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-drs/Pods-drs-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-drs/Pods-drs-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
