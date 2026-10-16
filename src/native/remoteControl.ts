@@ -18,6 +18,7 @@ type RemoteControlNative = {
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<boolean>;
   globalAction(action: string): Promise<boolean>;
   inputText(text: string): Promise<boolean>;
+  setLocalInputBlocked(blocked: boolean): Promise<boolean>;
 };
 
 const Native = (NativeModules.RemoteControlModule || null) as RemoteControlNative | null;
@@ -58,5 +59,8 @@ export const RemoteControl = {
   },
   inputText(text: string) {
     return Native ? Native.inputText(text) : Promise.resolve(false);
+  },
+  setLocalInputBlocked(blocked: boolean) {
+    return Native ? Native.setLocalInputBlocked(blocked) : Promise.resolve(false);
   },
 };

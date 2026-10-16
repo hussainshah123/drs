@@ -4,7 +4,7 @@
  * accessibility) and device management. Each row shows live status and an
  * action to enable it. Also hosts Settings + Unenroll.
  */
-import React, {useEffect, useState} from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   AppState,
@@ -16,13 +16,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {T} from '../ui/theme';
-import {ChatHeader} from '../chat/ui';
-import {Icon, type IconName} from '../ui/Icon';
-import {RemoteControl} from '../native/remoteControl';
-import {DeviceManagement} from '../native/deviceManagement';
-import {getPermissionState, requestStartupPermissions, type PermissionState} from '../core/permissions';
-import type {AgentController, ControllerState} from '../agent/controller';
+import { T } from '../ui/theme';
+import { ChatHeader } from '../chat/ui';
+import { Icon, type IconName } from '../ui/Icon';
+import { RemoteControl } from '../native/remoteControl';
+import { DeviceManagement } from '../native/deviceManagement';
+import {
+  getPermissionState,
+  requestStartupPermissions,
+  type PermissionState,
+} from '../core/permissions';
+import type { AgentController, ControllerState } from '../agent/controller';
 
 type RowSpec = {
   key: string;
@@ -32,7 +36,7 @@ type RowSpec = {
   granted: boolean;
   warn?: boolean;
   statusText: string;
-  action?: {label: string; onPress: () => void};
+  action?: { label: string; onPress: () => void };
 };
 
 export function PermissionsScreen({
@@ -95,20 +99,45 @@ export function PermissionsScreen({
     desc:
       Platform.OS === 'ios'
         ? 'Start a ReplayKit broadcast so an operator can view this screen.'
-        : 'Allow the operator to view this device screen (asks once).',
+        : 'Pause video while keeping Android capture alive. A new operator session resumes it automatically. If capture ends, Android requires consent again.',
     granted: state.sharing || state.screenActive,
-    statusText: state.sharing ? 'Active' : 'Ready',
-    action: state.sharing
-      ? {label: 'Stop', onPress: () => controller.stopSharing()}
-      : {
-          label: 'Start',
-          onPress: async () => {
-            const err = await controller.startSharing();
-            if (err) {
-              Alert.alert('Screen sharing failed', err);
-            }
+    statusText: state.screenPaused
+      ? 'Paused (capture active)'
+      : state.screenActive
+      ? 'Active'
+      : 'Ready',
+    action:
+      Platform.OS === 'android' && state.screenActive
+        ? {
+            label: state.screenPaused ? 'Resume' : 'Pause',
+            onPress: async () => {
+              try {
+                if (state.screenPaused) {
+                  await controller.resumeSharing();
+                } else {
+                  await controller.pauseSharing();
+                }
+              } catch (e: any) {
+                Alert.alert(
+                  state.screenPaused
+                    ? 'Could not resume screen sharing'
+                    : 'Could not pause screen sharing',
+                  e?.message || String(e),
+                );
+              }
+            },
+          }
+        : state.sharing
+        ? { label: 'Stop', onPress: () => controller.stopSharing() }
+        : {
+            label: 'Start',
+            onPress: async () => {
+              const err = await controller.startSharing();
+              if (err) {
+                Alert.alert('Screen sharing failed', err);
+              }
+            },
           },
-        },
   });
 
   // Remote control
@@ -122,7 +151,10 @@ export function PermissionsScreen({
       statusText: perms?.remoteControl ? 'Enabled' : 'Disabled',
       action: perms?.remoteControl
         ? undefined
-        : {label: 'Enable', onPress: () => RemoteControl.openAccessibilitySettings()},
+        : {
+            label: 'Enable',
+            onPress: () => RemoteControl.openAccessibilitySettings(),
+          },
     });
   } else {
     rows.push({
@@ -148,10 +180,17 @@ export function PermissionsScreen({
       desc: 'Allow an operator to remotely lock this device. Full wipe needs Device Owner.',
       granted: state.deviceOwner,
       warn: state.deviceAdminActive && !state.deviceOwner,
-      statusText: state.deviceOwner ? 'Device owner' : state.deviceAdminActive ? 'Admin only' : 'Off',
+      statusText: state.deviceOwner
+        ? 'Device owner'
+        : state.deviceAdminActive
+        ? 'Admin only'
+        : 'Off',
       action: state.deviceAdminActive
         ? undefined
-        : {label: 'Enable', onPress: () => controller.openDeviceAdminSettings()},
+        : {
+            label: 'Enable',
+            onPress: () => controller.openDeviceAdminSettings(),
+          },
     });
   }
 
@@ -159,7 +198,10 @@ export function PermissionsScreen({
 
   return (
     <View style={styles.wrap}>
-      <ChatHeader title="Permissions" subtitle={`${grantedCount}/${rows.length} enabled`} />
+      <ChatHeader
+        title="Permissions"
+        subtitle={`${grantedCount}/${rows.length} enabled`}
+      />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.sectionLabel}>ACCESS</Text>
         <View style={styles.card}>
@@ -170,7 +212,11 @@ export function PermissionsScreen({
 
         <Text style={styles.sectionLabel}>ACCOUNT</Text>
         <View style={styles.card}>
-          <TouchableOpacity activeOpacity={0.6} style={styles.linkRow} onPress={onOpenSettings}>
+          <TouchableOpacity
+            activeOpacity={0.6}
+            style={styles.linkRow}
+            onPress={onOpenSettings}
+          >
             <View style={styles.linkIcon}>
               <Icon name="settings" size={18} color={T.text} />
             </View>
@@ -180,7 +226,8 @@ export function PermissionsScreen({
           <TouchableOpacity
             activeOpacity={0.6}
             style={[styles.linkRow, styles.linkBorder]}
-            onPress={() => Linking.openSettings()}>
+            onPress={() => Linking.openSettings()}
+          >
             <View style={styles.linkIcon}>
               <Icon name="smartphone" size={18} color={T.text} />
             </View>
@@ -190,21 +237,24 @@ export function PermissionsScreen({
           <TouchableOpacity
             activeOpacity={0.6}
             style={[styles.linkRow, styles.linkBorder]}
-            onPress={onUnenroll}>
+            onPress={onUnenroll}
+          >
             <View style={styles.linkIcon}>
               <Icon name="logout" size={18} color={T.bad} />
             </View>
-            <Text style={[styles.linkText, {color: T.bad}]}>Unenroll this device</Text>
+            <Text style={[styles.linkText, { color: T.bad }]}>
+              Unenroll this device
+            </Text>
             <Icon name="chevron" size={18} color={T.textFaint} />
           </TouchableOpacity>
         </View>
-        <View style={{height: 24}} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     </View>
   );
 }
 
-function PermRow({spec, border}: {spec: RowSpec; border: boolean}) {
+function PermRow({ spec, border }: { spec: RowSpec; border: boolean }) {
   const color = spec.granted ? T.good : spec.warn ? T.warn : T.textFaint;
   return (
     <View style={[styles.permRow, border && styles.permBorder]}>
@@ -215,12 +265,16 @@ function PermRow({spec, border}: {spec: RowSpec; border: boolean}) {
         <Text style={styles.permTitle}>{spec.title}</Text>
         <Text style={styles.permDesc}>{spec.desc}</Text>
         <View style={styles.permStatusRow}>
-          <View style={[styles.statusDot, {backgroundColor: color}]} />
-          <Text style={[styles.permStatus, {color}]}>{spec.statusText}</Text>
+          <View style={[styles.statusDot, { backgroundColor: color }]} />
+          <Text style={[styles.permStatus, { color }]}>{spec.statusText}</Text>
         </View>
       </View>
       {spec.action ? (
-        <TouchableOpacity activeOpacity={0.85} style={styles.allowBtn} onPress={spec.action.onPress}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={styles.allowBtn}
+          onPress={spec.action.onPress}
+        >
           <Text style={styles.allowText}>{spec.action.label}</Text>
         </TouchableOpacity>
       ) : spec.granted ? (
@@ -233,8 +287,8 @@ function PermRow({spec, border}: {spec: RowSpec; border: boolean}) {
 }
 
 const styles = StyleSheet.create({
-  wrap: {flex: 1, backgroundColor: T.bg},
-  content: {padding: 16},
+  wrap: { flex: 1, backgroundColor: T.bg },
+  content: { padding: 16 },
   sectionLabel: {
     color: T.textFaint,
     fontSize: 11,
@@ -251,8 +305,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 8,
   },
-  permRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 14},
-  permBorder: {borderTopWidth: 1, borderTopColor: T.borderSoft},
+  permRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14 },
+  permBorder: { borderTopWidth: 1, borderTopColor: T.borderSoft },
   permIcon: {
     width: 44,
     height: 44,
@@ -264,19 +318,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 13,
   },
-  permBody: {flex: 1, marginRight: 10},
-  permTitle: {color: T.text, fontSize: 15.5, fontWeight: '800'},
-  permDesc: {color: T.textDim, fontSize: 12.5, marginTop: 3, lineHeight: 17},
-  permStatusRow: {flexDirection: 'row', alignItems: 'center', marginTop: 7},
-  statusDot: {width: 7, height: 7, borderRadius: 4, marginRight: 6},
-  permStatus: {fontSize: 12, fontWeight: '700'},
+  permBody: { flex: 1, marginRight: 10 },
+  permTitle: { color: T.text, fontSize: 15.5, fontWeight: '800' },
+  permDesc: { color: T.textDim, fontSize: 12.5, marginTop: 3, lineHeight: 17 },
+  permStatusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 7 },
+  statusDot: { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
+  permStatus: { fontSize: 12, fontWeight: '700' },
   allowBtn: {
     backgroundColor: T.accent,
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 9,
   },
-  allowText: {color: '#1A0E00', fontSize: 13.5, fontWeight: '800'},
+  allowText: { color: '#1A0E00', fontSize: 13.5, fontWeight: '800' },
   okBadge: {
     width: 28,
     height: 28,
@@ -285,8 +339,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  linkRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 15},
-  linkBorder: {borderTopWidth: 1, borderTopColor: T.borderSoft},
-  linkIcon: {width: 30},
-  linkText: {flex: 1, color: T.text, fontSize: 15, fontWeight: '700'},
+  linkRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15 },
+  linkBorder: { borderTopWidth: 1, borderTopColor: T.borderSoft },
+  linkIcon: { width: 30 },
+  linkText: { flex: 1, color: T.text, fontSize: 15, fontWeight: '700' },
 });

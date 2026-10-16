@@ -8,7 +8,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
-import type {KeyPair} from './crypto';
+import type { KeyPair } from './crypto';
 
 const CONFIG_KEY = 'drs.config.v1';
 const IDENTITY_SERVICE = 'drs.identity.v1';
@@ -19,16 +19,17 @@ export type AppConfig = {
   /** Optional gateway WS override; normally taken from enroll/token responses. */
   gatewayUrlOverride?: string;
   /** ICE servers for the agent's peer connections. */
-  iceServers: {urls: string[]; username?: string; credential?: string}[];
+  iceServers: { urls: string[]; username?: string; credential?: string }[];
   /** Force relay (TURN only) candidates. */
   forceRelay: boolean;
   /** Unattended devices answer sessions without prompting the end user. */
   autoAcceptConsent: boolean;
   /**
-   * Keep the screen capture alive after the first session so the operator can
-   * reconnect without the device re-showing the system capture prompt. The owner
-   * approves once (on the first connection); after that it behaves like a
-   * one-time permission. Turning it off reverts to prompting per session.
+   * Keep the screen capture alive between sessions so the operator can reconnect
+   * without the device re-showing the system capture prompt while capture remains
+   * active. Android requires consent again once MediaProjection ends; on iOS,
+   * the user must start ReplayKit and restart it if it ends. Turning this off
+   * reverts to prompting per session.
    */
   autoShareScreen: boolean;
   /**
@@ -51,7 +52,7 @@ export const DEFAULT_ENROLLMENT_TOKEN = 'drs_enr_PYV3WOJGPPBNMDBQ5S6JLITSS6';
 export const DEFAULT_CONFIG: AppConfig = {
   // Deployed backend. For local dev use http://10.0.2.2:8080 (Android emulator).
   apiBaseUrl: 'https://api.2-25-114-216.nip.io',
-  iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
+  iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }],
   forceRelay: false,
   autoAcceptConsent: true,
   autoShareScreen: true,
@@ -70,11 +71,11 @@ export async function loadConfig(): Promise<AppConfig> {
   try {
     const raw = await AsyncStorage.getItem(CONFIG_KEY);
     if (!raw) {
-      return {...DEFAULT_CONFIG};
+      return { ...DEFAULT_CONFIG };
     }
-    return {...DEFAULT_CONFIG, ...JSON.parse(raw)};
+    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
   } catch {
-    return {...DEFAULT_CONFIG};
+    return { ...DEFAULT_CONFIG };
   }
 }
 
@@ -84,7 +85,9 @@ export async function saveConfig(cfg: AppConfig): Promise<void> {
 
 export async function loadIdentity(): Promise<Identity | null> {
   try {
-    const creds = await Keychain.getGenericPassword({service: IDENTITY_SERVICE});
+    const creds = await Keychain.getGenericPassword({
+      service: IDENTITY_SERVICE,
+    });
     if (!creds) {
       return null;
     }
@@ -101,5 +104,5 @@ export async function saveIdentity(id: Identity): Promise<void> {
 }
 
 export async function clearIdentity(): Promise<void> {
-  await Keychain.resetGenericPassword({service: IDENTITY_SERVICE});
+  await Keychain.resetGenericPassword({ service: IDENTITY_SERVICE });
 }

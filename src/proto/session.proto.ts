@@ -153,6 +153,8 @@ message Control {
     bool release_all = 5;
     bool pause = 6;
     bool blank_screen = 7;
+    // Block physical touch/keyboard/mouse input; remote control stays active.
+    bool lock_local_input = 8;
   }
 }
 `;

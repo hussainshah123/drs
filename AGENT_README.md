@@ -19,6 +19,15 @@ signalling protocol as `Desktop-Remote-Solution/tools/fakeagent`.
   foreground service), one capture shared across all viewers.
 - **Remote control** via `DrsAccessibilityService` — gated on the participant's
   `control_input` capability bit and the session control mode.
+- **Pause local input** uses the in-session `lock_local_input` control. Android
+  can disable physical input devices only in a privileged/system build granted
+  `android.permission.DISABLE_INPUT_DEVICE`; regular APKs report this operation
+  as unsupported. Remote accessibility gestures remain enabled while physical
+  devices are disabled.
+- **Lock device** uses the in-session `lock_workstation` control and Android's
+  `DevicePolicyManager.lockNow()`, with an AccessibilityService fallback. This
+  locks the Android screen; it is not a temporary local-touch lock and may
+  interrupt the active remote session until the device is unlocked.
 
 ## Project layout (`src/`)
 

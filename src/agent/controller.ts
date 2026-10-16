@@ -17,10 +17,10 @@
  *
  * UI observes state via subscribe(); it never talks to the gateway directly.
  */
-import {Api, ApiError, type ApiMessage} from '../core/api';
-import {log} from '../core/log';
-import {makeTokenProvider, type DeviceToken} from '../core/token';
-import type {AppConfig, Identity} from '../core/storage';
+import { Api, ApiError, type ApiMessage } from '../core/api';
+import { log } from '../core/log';
+import { makeTokenProvider, type DeviceToken } from '../core/token';
+import type { AppConfig, Identity } from '../core/storage';
 import {
   SignalClient,
   type AgentStateInput,
@@ -36,17 +36,20 @@ import {
   type SignalMsg,
 } from '../proto/signal';
 import * as Inbox from '../messages/store';
-import type {InboxKind, InboxStatus} from '../messages/store';
-import {pushNotif} from '../notifications/store';
-import {Peer} from '../webrtc/peer';
-import {ScreenShare} from '../webrtc/screenShare';
-import {handleControlMessage} from '../webrtc/inputHandler';
-import {applyInputEvent, forgetInput} from '../webrtc/sessionInput';
-import type {SessionMsg} from '../proto/session';
-import {RemoteControl} from '../native/remoteControl';
-import {DeviceManagement, type DeviceOwnerStatus} from '../native/deviceManagement';
-import {DeviceData} from '../native/deviceData';
-import {Cap, can} from './capabilities';
+import type { InboxKind, InboxStatus } from '../messages/store';
+import { pushNotif } from '../notifications/store';
+import { Peer } from '../webrtc/peer';
+import { ScreenShare } from '../webrtc/screenShare';
+import { handleControlMessage } from '../webrtc/inputHandler';
+import { applyInputEvent, forgetInput } from '../webrtc/sessionInput';
+import type { SessionMsg } from '../proto/session';
+import { RemoteControl } from '../native/remoteControl';
+import {
+  DeviceManagement,
+  type DeviceOwnerStatus,
+} from '../native/deviceManagement';
+import { DeviceData } from '../native/deviceData';
+import { Cap, can } from './capabilities';
 
 export type PendingConsent = {
   requestId: string;
@@ -69,6 +72,8 @@ export type ControllerState = {
   signal: SignalStatus;
   deviceId: string;
   screenActive: boolean;
+  /** Video is paused for remote viewers while the OS capture remains active. */
+  screenPaused: boolean;
   /** The owner has pre-started screen sharing so sessions reuse it. */
   sharing: boolean;
   accessibilityEnabled: boolean;
@@ -79,7 +84,7 @@ export type ControllerState = {
   pendingConsent: PendingConsent | null;
 };
 
-type SessionMeta = {controlMode: number};
+type SessionMeta = { controlMode: number };
 
 /** Command kinds (mirror of CommandKind in the proto) the Android agent acts on. */
 const CmdKind = {
@@ -176,6 +181,8 @@ export class AgentController {
   private perms = new Map<number, number>(); // participantId -> permission bitmask
   private names = new Map<number, string>();
   private connected = new Set<number>();
+  private localInputLocks = new Set<number>();
+  private localInputLockQueue: Promise<void> = Promise.resolve();
   private sessionOf = new Map<number, string>(); // participantId -> sessionId
   private sessions = new Map<string, SessionMeta>();
   private state: ControllerState;
@@ -199,7 +206,7 @@ export class AgentController {
     const tokenProvider = async () => {
       const t = await baseProvider();
       return config.gatewayUrlOverride
-        ? {...t, gatewayUrl: config.gatewayUrlOverride}
+        ? { ...t, gatewayUrl: config.gatewayUrlOverride }
         : t;
     };
 
@@ -207,6 +214,7 @@ export class AgentController {
       signal: 'idle',
       deviceId: identity.deviceId,
       screenActive: false,
+      screenPaused: false,
       sharing: false,
       accessibilityEnabled: false,
       deviceAdminActive: false,
@@ -216,7 +224,7 @@ export class AgentController {
     };
 
     const events: SignalEvents = {
-      onStatusChange: s => this.patch({signal: s}),
+      onStatusChange: s => this.patch({ signal: s }),
       onRegistered: (deviceId, invReq) => this.onRegistered(deviceId, invReq),
       onParticipantJoin: j => this.onParticipantJoin(j),
       onParticipantLeave: l => this.onParticipantLeave(l),
@@ -226,11 +234,13 @@ export class AgentController {
       onIceCandidate: c => void this.onIceCandidate(c),
       onConsentRequest: r => this.onConsentRequest(r),
       onSessionEnded: e => this.onSessionEnded(e),
-      onRekeyRequest: r => log.info('ctrl', `rekey requested: ${r?.reason || ''}`),
+      onRekeyRequest: r =>
+        log.info('ctrl', `rekey requested: ${r?.reason || ''}`),
       onCommand: c => void this.onCommand(c),
       onCredentialDelivery: d => this.onCredentialDelivery(d),
       onMessage: m => void this.onMessage(m),
-      onGatewayError: (code, msg) => log.warn('ctrl', `gateway error ${code}: ${msg}`),
+      onGatewayError: (code, msg) =>
+        log.warn('ctrl', `gateway error ${code}: ${msg}`),
     };
 
     this.signal = new SignalClient(tokenProvider, agentInfo, events);
@@ -241,7 +251,11 @@ export class AgentController {
     this.screen.onStopped = () => {
       if (this.screenHeld || this.state.sharing || this.state.screenActive) {
         this.screenHeld = false;
-        this.patch({sharing: false, screenActive: false});
+        this.patch({
+          sharing: false,
+          screenActive: false,
+          screenPaused: false,
+        });
       }
     };
   }
@@ -275,13 +289,16 @@ export class AgentController {
 
   async refreshAccessibility(): Promise<void> {
     const enabled = await RemoteControl.isAccessibilityEnabled();
-    this.patch({accessibilityEnabled: enabled});
+    this.patch({ accessibilityEnabled: enabled });
   }
 
   /** Refreshes the DPC status (device admin / Device Owner) into the state. */
   async refreshDeviceAdmin(): Promise<void> {
     const s: DeviceOwnerStatus = await DeviceManagement.getStatus();
-    this.patch({deviceAdminActive: s.adminActive, deviceOwner: s.deviceOwner});
+    this.patch({
+      deviceAdminActive: s.adminActive,
+      deviceOwner: s.deviceOwner,
+    });
   }
 
   /** Opens the system "add device admin" screen (dev / non-owner devices). */
@@ -298,14 +315,25 @@ export class AgentController {
    */
   async startSharing(): Promise<string | null> {
     if (this.screenHeld) {
+      await this.resumeSharing();
       return null;
     }
     try {
-      log.info('ctrl', 'starting screen sharing (grant the prompt on the device)');
+      log.info(
+        'ctrl',
+        'starting screen sharing (grant the prompt on the device)',
+      );
       await this.screen.acquire(); // held reference; not released until stopSharing
       this.screenHeld = true;
-      this.patch({sharing: true, screenActive: this.screen.active});
-      log.info('ctrl', 'screen sharing active — operators can now view this device');
+      this.patch({
+        sharing: true,
+        screenActive: this.screen.active,
+        screenPaused: this.screen.paused,
+      });
+      log.info(
+        'ctrl',
+        'screen sharing active — operators can now view this device',
+      );
       return null;
     } catch (e: any) {
       const msg =
@@ -323,8 +351,73 @@ export class AgentController {
       this.screen.release();
       this.screenHeld = false;
       log.info('ctrl', 'screen sharing stopped');
-      this.patch({sharing: false, screenActive: this.screen.active});
+      this.patch({
+        sharing: false,
+        screenActive: this.screen.active,
+        screenPaused: this.screen.paused,
+      });
     }
+  }
+
+  async pauseSharing(): Promise<void> {
+    if (!this.screen.active) {
+      return;
+    }
+    if (!this.screenHeld) {
+      await this.screen.acquire();
+      this.screenHeld = true;
+    }
+    this.screen.setPaused(true);
+    await this.setPeersScreenPaused(true);
+    this.patch({
+      sharing: this.screenHeld,
+      screenActive: this.screen.active,
+      screenPaused: this.screen.paused,
+    });
+  }
+
+  async resumeSharing(): Promise<void> {
+    this.screen.setPaused(false);
+    await this.setPeersScreenPaused(false);
+    this.patch({
+      sharing: this.screenHeld,
+      screenActive: this.screen.active,
+      screenPaused: this.screen.paused,
+    });
+  }
+
+  private async setPeersScreenPaused(paused: boolean): Promise<void> {
+    const results = await Promise.allSettled(
+      Array.from(this.peers.values(), peer => peer.setScreenPaused(paused)),
+    );
+    let firstError: unknown;
+    results.forEach(result => {
+      if (result.status === 'rejected') {
+        log.error(
+          'ctrl',
+          `could not ${paused ? 'pause' : 'resume'} screen sender: ${
+            result.reason?.message || result.reason
+          }`,
+        );
+        firstError ??= result.reason;
+      }
+    });
+    if (firstError) {
+      throw firstError;
+    }
+  }
+
+  /** Ends capture and closes current viewers; a later capture needs OS consent. */
+  endScreenCapture(): void {
+    for (const pid of Array.from(this.peers.keys())) {
+      this.closePeer(pid);
+    }
+    this.screenHeld = false;
+    while (this.screen.active) {
+      this.screen.release();
+    }
+    this.patch({ sharing: false, screenActive: false, screenPaused: false });
+    log.info('ctrl', 'screen capture ended by user');
   }
 
   private setStreamingActive(active: boolean): void {
@@ -335,11 +428,17 @@ export class AgentController {
     DeviceManagement.setStreamingActive(active)
       .then(ok => {
         if (!ok && active) {
-          log.warn('ctrl', 'could not keep the CPU awake during screen streaming');
+          log.warn(
+            'ctrl',
+            'could not keep the CPU awake during screen streaming',
+          );
         }
       })
       .catch(e => {
-        log.error('ctrl', `screen streaming power management failed: ${e?.message || e}`);
+        log.error(
+          'ctrl',
+          `screen streaming power management failed: ${e?.message || e}`,
+        );
       });
   }
 
@@ -349,8 +448,11 @@ export class AgentController {
       return;
     }
     this.signal.sendConsentResponse(c.requestId, granted, 0);
-    log.info('ctrl', `consent ${granted ? 'granted' : 'denied'} for ${c.participantName}`);
-    this.patch({pendingConsent: null});
+    log.info(
+      'ctrl',
+      `consent ${granted ? 'granted' : 'denied'} for ${c.participantName}`,
+    );
+    this.patch({ pendingConsent: null });
   }
 
   // -------------------------------------------------------------------------
@@ -358,7 +460,7 @@ export class AgentController {
   // -------------------------------------------------------------------------
 
   private onRegistered(deviceId: string, inventoryRequested: boolean) {
-    this.patch({deviceId});
+    this.patch({ deviceId });
     void this.flushMessageAcks();
     void this.refreshHistory();
     if (inventoryRequested) {
@@ -388,9 +490,14 @@ export class AgentController {
     }
     const s = j?.session;
     if (s?.session_id) {
-      this.sessions.set(s.session_id, {controlMode: Number(s.control_mode) || 0});
+      this.sessions.set(s.session_id, {
+        controlMode: Number(s.control_mode) || 0,
+      });
     }
-    log.info('ctrl', `participant joined: ${this.names.get(pid)} perms=${this.perms.get(pid)}`);
+    log.info(
+      'ctrl',
+      `participant joined: ${this.names.get(pid)} perms=${this.perms.get(pid)}`,
+    );
     this.publishParticipants();
   }
 
@@ -398,6 +505,9 @@ export class AgentController {
     const pid = Number(c.participant_id);
     if (c.permissions !== undefined) {
       this.perms.set(pid, Number(c.permissions) || 0);
+      if (!can(this.perms.get(pid) || 0, Cap.CONTROL_INPUT)) {
+        this.setParticipantLocalInputLock(pid, false);
+      }
     }
     this.publishParticipants();
   }
@@ -405,6 +515,9 @@ export class AgentController {
   private onPermissionGrant(g: SignalMsg) {
     const pid = Number(g.participant_id);
     this.perms.set(pid, Number(g.permissions) || 0);
+    if (!can(this.perms.get(pid) || 0, Cap.CONTROL_INPUT)) {
+      this.setParticipantLocalInputLock(pid, false);
+    }
     log.info('ctrl', `permissions updated for ${pid}: ${this.perms.get(pid)}`);
     this.publishParticipants();
   }
@@ -424,7 +537,7 @@ export class AgentController {
       this.signal.sendConsentResponse(consent.requestId, true, 0);
       return;
     }
-    this.patch({pendingConsent: consent});
+    this.patch({ pendingConsent: consent });
   }
 
   private async onSessionOffer(o: SignalMsg) {
@@ -434,6 +547,16 @@ export class AgentController {
       return;
     }
     log.info('ctrl', `session offer from participant ${pid}`);
+
+    if (this.screen.active && this.screen.paused) {
+      log.info(
+        'ctrl',
+        'new operator session; resuming the retained screen capture',
+      );
+      this.screen.setPaused(false);
+      await this.setPeersScreenPaused(false);
+      this.patch({ screenActive: true, screenPaused: false });
+    }
 
     // A new offer (reconnect / ICE restart) replaces any existing peer.
     this.closePeer(pid);
@@ -466,6 +589,7 @@ export class AgentController {
           ),
         onControlData: data => this.onControlData(pid, data),
         onInput: input => this.onSessionInput(pid, input),
+        onControl: control => this.onSessionControl(pid, control),
         onConnected: () => this.onPeerConnected(pid),
         onFailed: () => log.warn('ctrl', `peer ${pid} failed`),
       },
@@ -490,11 +614,18 @@ export class AgentController {
       if (this.config.autoShareScreen && !this.screenHeld) {
         await this.screen.acquire(); // extra retained reference, no new prompt
         this.screenHeld = true;
-        log.info('ctrl', 'holding screen capture for future sessions (one-time grant)');
+        log.info(
+          'ctrl',
+          'holding screen capture for future sessions (one-time grant)',
+        );
       }
-      this.patch({screenActive: this.screen.active, sharing: this.screenHeld});
+      this.patch({
+        screenActive: this.screen.active,
+        screenPaused: this.screen.paused,
+        sharing: this.screenHeld,
+      });
       // The track is attached inside answer(), after setRemoteDescription.
-      const answerSdp = await peer.answer(o.sdp, stream);
+      const answerSdp = await peer.answer(o.sdp, stream, this.screen.paused);
       this.signal.sendSessionAnswer(sessionId, pid, answerSdp);
       log.info('ctrl', `answered participant ${pid}`);
     } catch (e: any) {
@@ -519,16 +650,23 @@ export class AgentController {
     if (c.end_of_candidates) {
       return;
     }
-    await peer.addRemoteIce(c.candidate || '', c.sdp_mid || '', Number(c.sdp_mline_index) || 0);
+    await peer.addRemoteIce(
+      c.candidate || '',
+      c.sdp_mid || '',
+      Number(c.sdp_mline_index) || 0,
+    );
   }
 
   private onControlData(pid: number, data: string) {
     const perm = this.perms.get(pid) || 0;
     const sessionId = this.sessionOf.get(pid);
-    const mode = sessionId ? this.sessions.get(sessionId)?.controlMode : undefined;
+    const mode = sessionId
+      ? this.sessions.get(sessionId)?.controlMode
+      : undefined;
     const modeAllowsInput =
       mode === undefined ||
       mode === ControlMode.FULL ||
+      mode === ControlMode.INPUT_LOCK ||
       mode === ControlMode.PARALLEL ||
       mode === ControlMode.BACKSTAGE;
     if (!can(perm, Cap.CONTROL_INPUT) || !modeAllowsInput) {
@@ -543,10 +681,13 @@ export class AgentController {
   private onSessionInput(pid: number, input: SessionMsg) {
     const perm = this.perms.get(pid) || 0;
     const sessionId = this.sessionOf.get(pid);
-    const mode = sessionId ? this.sessions.get(sessionId)?.controlMode : undefined;
+    const mode = sessionId
+      ? this.sessions.get(sessionId)?.controlMode
+      : undefined;
     const modeAllowsInput =
       mode === undefined ||
       mode === ControlMode.FULL ||
+      mode === ControlMode.INPUT_LOCK ||
       mode === ControlMode.PARALLEL ||
       mode === ControlMode.BACKSTAGE;
     if (!can(perm, Cap.CONTROL_INPUT) || !modeAllowsInput) {
@@ -555,11 +696,108 @@ export class AgentController {
     void applyInputEvent(pid, input);
   }
 
+  /** Applies the in-session physical-input lock only for an authorized controller. */
+  private onSessionControl(pid: number, control: SessionMsg) {
+    if (!can(this.perms.get(pid) || 0, Cap.CONTROL_INPUT)) {
+      return;
+    }
+    if (control.lock_workstation) {
+      void this.lockDeviceForSession(pid);
+    }
+    if (Object.prototype.hasOwnProperty.call(control, 'lock_local_input')) {
+      this.setParticipantLocalInputLock(pid, Boolean(control.lock_local_input));
+    }
+  }
+
+  private async lockDeviceForSession(pid: number): Promise<void> {
+    if (await this.lockDevice()) {
+      return;
+    }
+    const message =
+      'Could not lock this device. Enable device admin or the accessibility service.';
+    log.warn('ctrl', 'lock_workstation_failed: Android could not lock the device');
+    this.peers.get(pid)?.sendNotice('lock_workstation_failed', message);
+  }
+
+  private async lockDevice(): Promise<boolean> {
+    try {
+      if (await DeviceManagement.lockNow()) {
+        return true;
+      }
+    } catch (e: any) {
+      log.warn('ctrl', `DevicePolicyManager lock failed: ${e?.message || e}`);
+    }
+    try {
+      return await RemoteControl.globalAction('GLOBAL_ACTION_LOCK_SCREEN');
+    } catch (e: any) {
+      log.warn('ctrl', `accessibility screen lock failed: ${e?.message || e}`);
+      return false;
+    }
+  }
+
+  private setParticipantLocalInputLock(
+    pid: number,
+    locked: boolean,
+    reportFailure = true,
+  ): void {
+    this.localInputLockQueue = this.localInputLockQueue
+      .then(async () => {
+        const wasLocked = this.localInputLocks.has(pid);
+        if (wasLocked === locked) {
+          return;
+        }
+        const wasBlocking = this.localInputLocks.size > 0;
+        if (locked) {
+          this.localInputLocks.add(pid);
+        } else {
+          this.localInputLocks.delete(pid);
+        }
+        const shouldBlock = this.localInputLocks.size > 0;
+        if (wasBlocking === shouldBlock) {
+          return;
+        }
+        let applied = false;
+        try {
+          applied = await RemoteControl.setLocalInputBlocked(shouldBlock);
+        } catch (e: any) {
+          log.error('ctrl', `native local input update failed: ${e?.message || e}`);
+        }
+        if (applied) {
+          return;
+        }
+
+        if (wasLocked) {
+          this.localInputLocks.add(pid);
+        } else {
+          this.localInputLocks.delete(pid);
+        }
+        const code = locked
+          ? 'local_input_block_failed'
+          : 'local_input_unblock_failed';
+        const message =
+          'This mobile device cannot block physical input. The Android system build must grant the agent permission to disable input devices.';
+        log.warn('ctrl', `${code}: privileged input-device access is unavailable`);
+        if (reportFailure) {
+          this.peers.get(pid)?.sendNotice(code, message);
+        }
+      })
+      .catch(e => {
+        log.error('ctrl', `local input lock update failed: ${e?.message || e}`);
+      });
+  }
+
   private async onPeerConnected(pid: number) {
     this.connected.add(pid);
     this.publishParticipants();
     const peer = this.peers.get(pid);
     const sessionId = this.sessionOf.get(pid);
+    if (
+      sessionId &&
+      this.sessions.get(sessionId)?.controlMode === ControlMode.INPUT_LOCK &&
+      can(this.perms.get(pid) || 0, Cap.CONTROL_INPUT)
+    ) {
+      this.setParticipantLocalInputLock(pid, true);
+    }
     if (peer && sessionId) {
       const pair = await peer.selectedPair();
       if (pair) {
@@ -567,7 +805,9 @@ export class AgentController {
         const name = this.names.get(pid) || `participant ${pid}`;
         log.info(
           'ctrl',
-          `screen now streaming to ${name} via ${relay ? 'TURN relay' : 'direct P2P'} (${pair.local}/${pair.remote})`,
+          `screen now streaming to ${name} via ${
+            relay ? 'TURN relay' : 'direct P2P'
+          } (${pair.local}/${pair.remote})`,
         );
         // Note: TransportReport is a participant→gateway message; the gateway
         // rejects it from agents, so we only log the path here.
@@ -620,7 +860,9 @@ export class AgentController {
     const sender = m.sender_name ? String(m.sender_name) : 'Support';
     const text = messageText(m.body_json);
     const expiresAt =
-      m.expires_at?.seconds !== undefined ? Number(m.expires_at.seconds) * 1000 : undefined;
+      m.expires_at?.seconds !== undefined
+        ? Number(m.expires_at.seconds) * 1000
+        : undefined;
 
     const isNew = Inbox.receive({
       id,
@@ -653,7 +895,10 @@ export class AgentController {
    * updateMessage records what the person at the device did with a message
    * (read, acknowledged, dismissed) and reports it to the operator.
    */
-  updateMessage(id: string, status: 'read' | 'acknowledged' | 'dismissed'): void {
+  updateMessage(
+    id: string,
+    status: 'read' | 'acknowledged' | 'dismissed',
+  ): void {
     if (Inbox.advance(id, status)) {
       this.syncMessage(id);
     }
@@ -681,7 +926,7 @@ export class AgentController {
 
   /** loadOlderHistory loads the next older page, if there is one. */
   async loadOlderHistory(): Promise<void> {
-    const {cursor} = Inbox.getHistoryState();
+    const { cursor } = Inbox.getHistoryState();
     if (cursor) {
       await this.loadHistory(cursor);
     }
@@ -692,7 +937,7 @@ export class AgentController {
     if (Inbox.getHistoryState().loading || this.historyUnsupported) {
       return;
     }
-    Inbox.setHistoryState({loading: true, error: null});
+    Inbox.setHistoryState({ loading: true, error: null });
     try {
       await Inbox.loadInbox();
       const page = await this.api.messages(await this.jwt(), cursor);
@@ -707,14 +952,24 @@ export class AgentController {
       // Rows the server still holds as queued need their delivered ack.
       void this.flushMessageAcks();
     } catch (e: any) {
-      if (e instanceof ApiError && e.status === 404 && e.message === 'no such endpoint') {
+      if (
+        e instanceof ApiError &&
+        e.status === 404 &&
+        e.message === 'no such endpoint'
+      ) {
         this.historyUnsupported = true;
-        log.warn('ctrl', 'message history is not available on this server; showing live messages only');
-        Inbox.setHistoryState({loading: false, cursor: null, error: null});
+        log.warn(
+          'ctrl',
+          'message history is not available on this server; showing live messages only',
+        );
+        Inbox.setHistoryState({ loading: false, cursor: null, error: null });
         return;
       }
       log.warn('ctrl', `message history failed: ${e?.message || e}`);
-      Inbox.setHistoryState({loading: false, error: 'Could not load message history'});
+      Inbox.setHistoryState({
+        loading: false,
+        error: 'Could not load message history',
+      });
     }
   }
 
@@ -731,10 +986,17 @@ export class AgentController {
       return;
     }
     if (!this.signal.sendMessage(body)) {
-      throw new Error('Not connected — your message will send once you are back online.');
+      throw new Error(
+        'Not connected — your message will send once you are back online.',
+      );
     }
     await Inbox.loadInbox();
-    Inbox.addOutgoing({kind: 'chat', sender: 'You', text: body, receivedAt: Date.now()});
+    Inbox.addOutgoing({
+      kind: 'chat',
+      sender: 'You',
+      text: body,
+      receivedAt: Date.now(),
+    });
   }
 
   /** jwt returns a device JWT for the agent API, reusing one with time left. */
@@ -781,15 +1043,12 @@ export class AgentController {
       switch (kind) {
         case CmdKind.LOCK:
         case CmdKind.MDM_LOCK: {
-          // Prefer the DevicePolicyManager lock (works without accessibility and
-          // on a Device Owner); fall back to the accessibility global action.
-          let locked = await DeviceManagement.lockNow();
-          if (!locked) {
-            locked = await RemoteControl.globalAction('GLOBAL_ACTION_LOCK_SCREEN');
-          }
+          const locked = await this.lockDevice();
           locked
             ? ok('screen locked')
-            : fail('cannot lock: enable device admin or the accessibility service');
+            : fail(
+                'cannot lock: enable device admin or the accessibility service',
+              );
           return;
         }
         case CmdKind.REBOOT: {
@@ -807,7 +1066,11 @@ export class AgentController {
           await this.refreshDeviceAdmin();
           this.signal.sendInventoryReport(
             1,
-            {platform: 'android', os_version: this.agentInfo.osVersion, hostname: this.agentInfo.hostname},
+            {
+              platform: 'android',
+              os_version: this.agentInfo.osVersion,
+              hostname: this.agentInfo.hostname,
+            },
             [],
             [],
           );
@@ -858,7 +1121,10 @@ export class AgentController {
    */
   private onCredentialDelivery(d: SignalMsg) {
     const deliveryId = d?.delivery_id || '';
-    log.info('ctrl', `credential delivery ${deliveryId} — not applicable on android`);
+    log.info(
+      'ctrl',
+      `credential delivery ${deliveryId} — not applicable on android`,
+    );
     this.signal.sendCredentialDeliveryAck(
       deliveryId,
       false,
@@ -871,6 +1137,7 @@ export class AgentController {
   // -------------------------------------------------------------------------
 
   private closePeer(pid: number) {
+    this.setParticipantLocalInputLock(pid, false, false);
     const peer = this.peers.get(pid);
     if (peer) {
       peer.close();
@@ -880,10 +1147,16 @@ export class AgentController {
     }
     this.connected.delete(pid);
     forgetInput(pid);
-    this.patch({screenActive: this.screen.active});
+    this.patch({
+      screenActive: this.screen.active,
+      screenPaused: this.screen.paused,
+    });
   }
 
   private teardownAll() {
+    for (const pid of Array.from(this.localInputLocks)) {
+      this.setParticipantLocalInputLock(pid, false, false);
+    }
     for (const peer of this.peers.values()) {
       peer.close();
     }
@@ -899,7 +1172,12 @@ export class AgentController {
     while (this.screen.active) {
       this.screen.release();
     }
-    this.patch({screenActive: false, sharing: false, participants: []});
+    this.patch({
+      screenActive: false,
+      screenPaused: false,
+      sharing: false,
+      participants: [],
+    });
   }
 
   private publishParticipants() {
@@ -914,11 +1192,11 @@ export class AgentController {
         connected: this.connected.has(pid),
       });
     }
-    this.patch({participants});
+    this.patch({ participants });
   }
 
   private patch(p: Partial<ControllerState>) {
-    this.state = {...this.state, ...p};
+    this.state = { ...this.state, ...p };
     this.listeners.forEach(l => l(this.state));
   }
 }

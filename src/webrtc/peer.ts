@@ -16,11 +16,20 @@ import {
   type MediaStream,
   type MediaStreamTrack,
 } from 'react-native-webrtc';
-import {log} from '../core/log';
-import {signMessageBytes} from '../core/crypto';
-import {bodyKey, decodeSession, encodeSession, type SessionMsg} from '../proto/session';
+import { log } from '../core/log';
+import { signMessageBytes } from '../core/crypto';
+import {
+  bodyKey,
+  decodeSession,
+  encodeSession,
+  type SessionMsg,
+} from '../proto/session';
 
-export type IceServer = {urls: string[]; username?: string; credential?: string};
+export type IceServer = {
+  urls: string[];
+  username?: string;
+  credential?: string;
+};
 
 /** Identity the agent signs into its AgentHello (docs session-protocol §1.5). */
 export type HelloConfig = {
@@ -32,11 +41,19 @@ export type HelloConfig = {
 };
 
 export type PeerCallbacks = {
-  onLocalIce: (cand: {candidate: string; sdpMid: string | null; sdpMLineIndex: number | null} | null) => void;
+  onLocalIce: (
+    cand: {
+      candidate: string;
+      sdpMid: string | null;
+      sdpMLineIndex: number | null;
+    } | null,
+  ) => void;
   /** Legacy JSON control channel (kept for older viewers). */
   onControlData: (data: string) => void;
   /** Decoded in-session InputEvent (drs.session.v1), viewer → agent. */
   onInput: (input: SessionMsg) => void;
+  /** Decoded in-session Control (drs.session.v1), viewer → agent. */
+  onControl: (control: SessionMsg) => void;
   onConnected: () => void;
   onFailed: () => void;
 };
@@ -52,6 +69,9 @@ export class Peer {
   private answerFingerprint = ''; // a=fingerprint of our SDP answer
   private seq = 0;
   private closed = false;
+  private screenSender: any = null;
+  private screenTrack: MediaStreamTrack | null = null;
+  private screenPaused = false;
 
   constructor(
     participantId: number,
@@ -98,7 +118,10 @@ export class Peer {
     };
     pc.ondatachannel = (ev: any) => {
       const ch = ev.channel;
-      log.info('peer', `data channel "${ch.label}" from participant ${this.participantId}`);
+      log.info(
+        'peer',
+        `data channel "${ch.label}" from participant ${this.participantId}`,
+      );
       if (ch.label === 'drs.session') {
         // The in-session channel: the agent must identify itself with a signed
         // AgentHello the moment it opens, or the viewer drops the session after
@@ -119,7 +142,11 @@ export class Peer {
         this.controlChannel = ch;
         ch.onmessage = (m: any) => this.cb.onControlData(String(m.data));
       } else {
-        ch.onmessage = (m: any) => log.debug('peer', `data(${ch.label}): ${String(m.data).slice(0, 80)}`);
+        ch.onmessage = (m: any) =>
+          log.debug(
+            'peer',
+            `data(${ch.label}): ${String(m.data).slice(0, 80)}`,
+          );
       }
     };
   }
@@ -160,7 +187,12 @@ export class Peer {
       },
     };
     this.sendSession(msg);
-    log.info('peer', `sent agent_hello (fp=${fp.slice(0, 20)}…, perms=${this.hello.permissions})`);
+    log.info(
+      'peer',
+      `sent agent_hello (fp=${fp.slice(0, 20)}…, perms=${
+        this.hello.permissions
+      })`,
+    );
   }
 
   /** sendSession encodes and sends a SessionMessage on the drs.session channel. */
@@ -171,7 +203,10 @@ export class Peer {
     }
     try {
       const bytes = encodeSession(msg);
-      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const buf = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      );
       ch.send(buf);
     } catch (e: any) {
       log.warn('peer', `session send failed: ${e?.message || e}`);
@@ -184,7 +219,11 @@ export class Peer {
     if (data instanceof ArrayBuffer) {
       bytes = new Uint8Array(data);
     } else if (ArrayBuffer.isView(data)) {
-      bytes = new Uint8Array((data as any).buffer, (data as any).byteOffset, (data as any).byteLength);
+      bytes = new Uint8Array(
+        (data as any).buffer,
+        (data as any).byteOffset,
+        (data as any).byteLength,
+      );
     } else {
       return; // unexpected text frame
     }
@@ -198,10 +237,16 @@ export class Peer {
     if (key === 'input') {
       this.cb.onInput(msg.input);
     } else if (key === 'control') {
-      // request_keyframe: force an IDR by renegotiating is heavy; the browser
-      // usually recovers via RTCP PLI automatically, so we just log it here.
-      log.debug('peer', `control: ${JSON.stringify(msg.control)}`);
+      this.cb.onControl(msg.control);
     }
+  }
+
+  /** Sends a warning notice to the participant over the in-session channel. */
+  sendNotice(code: string, message: string): void {
+    this.sendSession({
+      seq: ++this.seq,
+      notice: {level: 2, code, message},
+    });
   }
 
   /**
@@ -211,7 +256,7 @@ export class Peer {
    * flip its direction to sendonly — addTrack alone does not always reuse the
    * offered transceiver, which would leave the operator with no video.
    */
-  async addScreen(stream: MediaStream): Promise<void> {
+  async addScreen(stream: MediaStream, paused = false): Promise<void> {
     const videoTrack = stream.getVideoTracks()[0];
     if (!videoTrack) {
       log.warn('peer', 'no video track in the capture stream');
@@ -219,7 +264,9 @@ export class Peer {
     }
     log.info(
       'peer',
-      `screen track: id=${(videoTrack as any).id} enabled=${videoTrack.enabled} state=${(videoTrack as any).readyState}`,
+      `screen track: id=${(videoTrack as any).id} enabled=${
+        videoTrack.enabled
+      } state=${(videoTrack as any).readyState}`,
     );
     // Bind to the operator's recvonly video transceiver (this path connects
     // reliably in react-native-webrtc). Set it sendrecv so the sender transmits.
@@ -231,6 +278,8 @@ export class Peer {
     });
     if (vtx?.sender?.replaceTrack) {
       await vtx.sender.replaceTrack(videoTrack);
+      this.screenSender = vtx.sender;
+      this.screenTrack = videoTrack;
       try {
         vtx.direction = 'sendrecv';
       } catch {}
@@ -239,15 +288,44 @@ export class Peer {
       // produces 0 frames for screencast; VP8's software encoder is reliable at
       // any resolution and every browser viewer decodes it.
       this.preferVp8(vtx);
-      log.info('peer', `screen bound to video transceiver for participant ${this.participantId}`);
+      log.info(
+        'peer',
+        `screen bound to video transceiver for participant ${this.participantId}`,
+      );
     } else {
       try {
-        this.pc.addTrack(videoTrack, stream);
-        log.info('peer', `screen attached via addTrack for participant ${this.participantId}`);
+        this.screenSender = this.pc.addTrack(videoTrack, stream);
+        this.screenTrack = videoTrack;
+        log.info(
+          'peer',
+          `screen attached via addTrack for participant ${this.participantId}`,
+        );
       } catch (e: any) {
         log.warn('peer', `addTrack failed: ${e?.message || e}`);
       }
     }
+    if (paused) {
+      await this.setScreenPaused(true);
+    }
+  }
+
+  /** Detaches/re-attaches the sender while preserving the live capture track. */
+  async setScreenPaused(paused: boolean): Promise<void> {
+    if (
+      !this.screenSender?.replaceTrack ||
+      !this.screenTrack ||
+      this.screenPaused === paused
+    ) {
+      return;
+    }
+    await this.screenSender.replaceTrack(paused ? null : this.screenTrack);
+    this.screenPaused = paused;
+    log.info(
+      'peer',
+      `screen sender ${paused ? 'paused' : 'resumed'} for participant ${
+        this.participantId
+      }`,
+    );
   }
 
   /**
@@ -278,13 +356,17 @@ export class Peer {
    * to the operator's recvonly video transceiver instead of creating a new,
    * unmatched m-line (which would leave the operator with no video).
    */
-  async answer(offerSdp: string, stream: MediaStream | null): Promise<string> {
+  async answer(
+    offerSdp: string,
+    stream: MediaStream | null,
+    screenPaused = false,
+  ): Promise<string> {
     await this.pc.setRemoteDescription(
-      new RTCSessionDescription({type: 'offer', sdp: offerSdp}),
+      new RTCSessionDescription({ type: 'offer', sdp: offerSdp }),
     );
     this.remoteSet = true;
     if (stream) {
-      await this.addScreen(stream);
+      await this.addScreen(stream, screenPaused);
     }
     await this.flushRemoteIce();
     const ans = await this.pc.createAnswer();
@@ -297,17 +379,24 @@ export class Peer {
     const sendsVideo = /a=(sendrecv|sendonly)/.test(sdp || '');
     log.info(
       'peer',
-      `answer created (m=video:${hasVideo}, sends:${sendsVideo}, fp=${this.answerFingerprint.slice(0, 16)}…)`,
+      `answer created (m=video:${hasVideo}, sends:${sendsVideo}, fp=${this.answerFingerprint.slice(
+        0,
+        16,
+      )}…)`,
     );
     return sdp;
   }
 
   /** addRemoteIce adds a trickled candidate from the participant. */
-  async addRemoteIce(candidate: string, sdpMid: string, sdpMLineIndex: number): Promise<void> {
+  async addRemoteIce(
+    candidate: string,
+    sdpMid: string,
+    sdpMLineIndex: number,
+  ): Promise<void> {
     if (!candidate) {
       return; // end-of-candidates marker
     }
-    const ice = new RTCIceCandidate({candidate, sdpMid, sdpMLineIndex});
+    const ice = new RTCIceCandidate({ candidate, sdpMid, sdpMLineIndex });
     if (!this.remoteSet) {
       this.pendingRemoteIce.push(ice);
       return;
@@ -354,14 +443,20 @@ export class Peer {
         let w = 0;
         let h = 0;
         stats.forEach((s: any) => {
-          if (s.type === 'outbound-rtp' && (s.kind === 'video' || s.mediaType === 'video')) {
+          if (
+            s.type === 'outbound-rtp' &&
+            (s.kind === 'video' || s.mediaType === 'video')
+          ) {
             encoded = s.framesEncoded || 0;
             pkts = s.packetsSent || 0;
             w = s.frameWidth || 0;
             h = s.frameHeight || 0;
           }
         });
-        log.info('peer', `outbound video ${w}x${h}: encoded ${encoded}, packetsSent ${pkts}`);
+        log.info(
+          'peer',
+          `outbound video ${w}x${h}: encoded ${encoded}, packetsSent ${pkts}`,
+        );
       } catch (e: any) {
         log.warn('peer', `sender stats failed: ${e?.message || e}`);
       }
@@ -369,12 +464,16 @@ export class Peer {
   }
 
   /** selectedPair returns the nominated local/remote candidate types for audit. */
-  async selectedPair(): Promise<{local: string; remote: string} | null> {
+  async selectedPair(): Promise<{ local: string; remote: string } | null> {
     try {
       const stats = await this.pc.getStats();
       let pair: any = null;
       stats.forEach((r: any) => {
-        if (r.type === 'candidate-pair' && (r.nominated || r.selected) && r.state === 'succeeded') {
+        if (
+          r.type === 'candidate-pair' &&
+          (r.nominated || r.selected) &&
+          r.state === 'succeeded'
+        ) {
           pair = r;
         }
       });
@@ -391,7 +490,7 @@ export class Peer {
           remote = r.candidateType;
         }
       });
-      return {local, remote};
+      return { local, remote };
     } catch {
       return null;
     }

@@ -8,15 +8,20 @@
  * shared across every participant's peer connection; the first viewer starts it,
  * the last one to leave stops it.
  */
-import {Platform} from 'react-native';
-import {mediaDevices, type MediaStream, type MediaStreamTrack} from 'react-native-webrtc';
-import {log} from '../core/log';
-import {showBroadcastPicker} from './iosPicker';
+import { Platform } from 'react-native';
+import {
+  mediaDevices,
+  type MediaStream,
+  type MediaStreamTrack,
+} from 'react-native-webrtc';
+import { log } from '../core/log';
+import { showBroadcastPicker } from './iosPicker';
 
 export class ScreenShare {
   private stream: MediaStream | null = null;
   private refCount = 0;
   private starting: Promise<MediaStream> | null = null;
+  private isPaused = false;
 
   /** Called when the capture fully stops (last release, or ended by the system). */
   onStopped: (() => void) | null = null;
@@ -24,6 +29,10 @@ export class ScreenShare {
   /** active is true while the screen is being captured. */
   get active(): boolean {
     return this.stream != null;
+  }
+
+  get paused(): boolean {
+    return this.isPaused;
   }
 
   /**
@@ -54,11 +63,19 @@ export class ScreenShare {
     } else {
       log.info('screen', 'requesting screen capture (MediaProjection)');
     }
-    const stream = (await (mediaDevices as any).getDisplayMedia()) as MediaStream;
+    const stream = (await (
+      mediaDevices as any
+    ).getDisplayMedia()) as MediaStream;
     this.stream = stream;
+    this.isPaused = false;
     stream.getTracks().forEach((t: MediaStreamTrack) => {
       const s = (t as any).getSettings?.() || {};
-      log.info('screen', `capture track ${(t as any).id}: ${s.width || '?'}x${s.height || '?'} fps=${s.frameRate || '?'}`);
+      log.info(
+        'screen',
+        `capture track ${(t as any).id}: ${s.width || '?'}x${
+          s.height || '?'
+        } fps=${s.frameRate || '?'}`,
+      );
       (t as any).addEventListener?.('ended', () => {
         log.warn('screen', 'capture track ended by system/user');
         this.forceStop();
@@ -76,6 +93,20 @@ export class ScreenShare {
     }
   }
 
+  /** Marks the capture paused without stopping its OS-owned capture track. */
+  setPaused(paused: boolean): void {
+    if (!this.stream || this.isPaused === paused) {
+      return;
+    }
+    this.isPaused = paused;
+    log.info(
+      'screen',
+      paused
+        ? 'screen sharing paused; capture remains active'
+        : 'screen sharing resumed',
+    );
+  }
+
   private forceStop(): void {
     this.refCount = 0;
     const wasActive = this.stream != null;
@@ -87,6 +118,7 @@ export class ScreenShare {
       });
       this.stream = null;
     }
+    this.isPaused = false;
     log.info('screen', 'screen capture stopped');
     if (wasActive) {
       this.onStopped?.();

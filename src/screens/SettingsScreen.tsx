@@ -3,11 +3,19 @@
  * auto-accept-consent policy. Saved to AsyncStorage; takes effect on next
  * agent restart.
  */
-import React, {useState} from 'react';
-import {Alert, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
-import {Button, Card, Field, H1, H2, P, Row} from '../ui/components';
-import {T} from '../ui/theme';
-import {saveConfig, type AppConfig} from '../core/storage';
+import React, { useState } from 'react';
+import {
+  Alert,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
+import { Button, Card, Field, H1, H2, P, Row } from '../ui/components';
+import { T } from '../ui/theme';
+import { saveConfig, type AppConfig } from '../core/storage';
 
 export function SettingsScreen({
   config,
@@ -20,7 +28,9 @@ export function SettingsScreen({
 }) {
   const [apiUrl, setApiUrl] = useState(config.apiBaseUrl);
   const [gateway, setGateway] = useState(config.gatewayUrlOverride || '');
-  const [iceText, setIceText] = useState(JSON.stringify(config.iceServers, null, 2));
+  const [iceText, setIceText] = useState(
+    JSON.stringify(config.iceServers, null, 2),
+  );
   const [relay, setRelay] = useState(config.forceRelay);
   const [auto, setAuto] = useState(config.autoAcceptConsent);
   const [holdShare, setHoldShare] = useState(config.autoShareScreen);
@@ -85,24 +95,29 @@ export function SettingsScreen({
       <Card>
         <H2>Session policy</H2>
         <Row>
-          <View style={{flex: 1, paddingRight: 12}}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
             <Text style={styles.switchLabel}>Auto-accept remote sessions</Text>
             <P dim>Unattended devices answer without prompting the end user.</P>
           </View>
           <Switch value={auto} onValueChange={setAuto} />
         </Row>
         <Row>
-          <View style={{flex: 1, paddingRight: 12}}>
-            <Text style={styles.switchLabel}>Keep screen sharing granted</Text>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={styles.switchLabel}>
+              {Platform.OS === 'ios'
+                ? 'Keep screen sharing available'
+                : 'Keep screen sharing granted'}
+            </Text>
             <P dim>
-              Approve the capture prompt once on the first connection; after that
-              operators reconnect without asking again (like a camera permission).
+              {Platform.OS === 'ios'
+                ? 'Keep an active ReplayKit capture available between operator sessions. You must start the broadcast on the device; iOS will not silently restart it if it ends.'
+                : 'Keep Android screen capture active between operator sessions. Pausing stops video but keeps capture alive; a new operator session resumes it automatically. Android requires consent again if capture ends.'}
             </P>
           </View>
           <Switch value={holdShare} onValueChange={setHoldShare} />
         </Row>
         <Row>
-          <View style={{flex: 1, paddingRight: 12}}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
             <Text style={styles.switchLabel}>Run as hidden managed agent</Text>
             <P dim>
               On an MDM (Device Owner) device: hide the launcher icon, block
@@ -120,7 +135,7 @@ export function SettingsScreen({
 }
 
 const styles = StyleSheet.create({
-  scroll: {flex: 1, backgroundColor: T.bg},
-  content: {padding: T.space, paddingBottom: 48},
-  switchLabel: {color: T.text, fontSize: 14, fontWeight: '600'},
+  scroll: { flex: 1, backgroundColor: T.bg },
+  content: { padding: T.space, paddingBottom: 48 },
+  switchLabel: { color: T.text, fontSize: 14, fontWeight: '600' },
 });

@@ -15,6 +15,8 @@
 
     <!-- Device management -->
     <uses-permission android:name="android.permission.REBOOT" />
+    <!-- Privileged/system builds only; ordinary APKs cannot disable physical input devices. -->
+    <uses-permission android:name="android.permission.DISABLE_INPUT_DEVICE" />
 
     <application
         android:name=".MainApplication"
