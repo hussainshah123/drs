@@ -26,6 +26,13 @@ class DrsAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: DrsAccessibilityService? = null
             private set
+
+        /**
+         * Duration of each live-touch segment. Short enough to feel immediate
+         * (a new mouse position is reflected within roughly one segment), long
+         * enough that dispatchGesture isn't called at an unreasonable rate.
+         */
+        private const val LIVE_SEGMENT_MS = 16L
     }
 
     override fun onServiceConnected() {
@@ -84,6 +91,14 @@ class DrsAccessibilityService : AccessibilityService() {
         return dispatch(GestureDescription.Builder().addStroke(stroke).build())
     }
 
+    /**
+     * One-shot replayed swipe: a single stroke from (x1,y1) to (x2,y2) over
+     * durationMs. Used as the pre-API-26 fallback and for scripted/legacy
+     * callers. For a live operator drag, prefer touchDown/touchMove/touchUp
+     * below — this method only plays out AFTER the whole gesture is known,
+     * which is what made dragging feel delayed (nothing moves on screen
+     * until release, then the entire motion replays at once).
+     */
     fun swipe(nx1: Double, ny1: Double, nx2: Double, ny2: Double, durationMs: Long): Boolean {
         val (x1, y1) = px(nx1, ny1)
         val (x2, y2) = px(nx2, ny2)
@@ -100,6 +115,222 @@ class DrsAccessibilityService : AccessibilityService() {
             dispatchGesture(gesture, null, null)
         } catch (e: Exception) {
             false
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Live touch tracking (API 26+): the operator's mouse down/move/up stream
+    // is injected as an actual, continuous touch as each event arrives —
+    // StrokeDescription.continueStroke() chains short segments one after
+    // another, each dispatched only once the previous one's own callback
+    // fires (that is an OS constraint, not a choice: segments cannot overlap).
+    // Rapid moves are coalesced to the latest target in between segments, the
+    // same way a real finger's movement is sampled, so this stays responsive
+    // without unbounded queueing. This is what makes a drag/scroll track the
+    // mouse live instead of replaying only after release.
+    // -------------------------------------------------------------------------
+    private val liveTouchLock = Any()
+    private var liveStroke: GestureDescription.StrokeDescription? = null
+    private var liveLastX = 0f
+    private var liveLastY = 0f
+    private var liveTargetX = 0f
+    private var liveTargetY = 0f
+    private var liveSegmentInFlight = false
+    private var livePendingUp = false
+    private var liveActive = false
+
+    private fun liveTouchSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+
+    /** Starts a live touch at (nx,ny). Returns false (caller should fall back to tap/swipe) pre-API 26 or on failure. */
+    fun touchDown(nx: Double, ny: Double): Boolean {
+        if (!liveTouchSupported()) {
+            return false
+        }
+        val (x, y) = px(nx, ny)
+        synchronized(liveTouchLock) {
+            liveLastX = x
+            liveLastY = y
+            liveTargetX = x
+            liveTargetY = y
+            livePendingUp = false
+            liveActive = true
+            liveSegmentInFlight = true
+        }
+        val path = Path().apply { moveTo(x, y) }
+        // A short initial dwell so the OS registers a real ACTION_DOWN before
+        // any movement begins — too short and some devices drop it.
+        val stroke = GestureDescription.StrokeDescription(path, 0, LIVE_SEGMENT_MS, true)
+        synchronized(liveTouchLock) { liveStroke = stroke }
+        return dispatchLive(stroke)
+    }
+
+    /** Updates the live touch's target position; coalesced with any already-pending move. */
+    fun touchMove(nx: Double, ny: Double): Boolean {
+        if (!liveTouchSupported()) {
+            return false
+        }
+        val (x, y) = px(nx, ny)
+        var shouldKick = false
+        synchronized(liveTouchLock) {
+            if (!liveActive) {
+                return false
+            }
+            liveTargetX = x
+            liveTargetY = y
+            if (!liveSegmentInFlight) {
+                shouldKick = true
+                liveSegmentInFlight = true
+            }
+        }
+        if (shouldKick) {
+            continueLiveStroke()
+        }
+        return true
+    }
+
+    /** Ends the live touch at (nx,ny). */
+    fun touchUp(nx: Double, ny: Double): Boolean {
+        if (!liveTouchSupported()) {
+            return false
+        }
+        val (x, y) = px(nx, ny)
+        var shouldKick = false
+        synchronized(liveTouchLock) {
+            if (!liveActive) {
+                return false
+            }
+            liveTargetX = x
+            liveTargetY = y
+            livePendingUp = true
+            if (!liveSegmentInFlight) {
+                shouldKick = true
+                liveSegmentInFlight = true
+            }
+        }
+        if (shouldKick) {
+            continueLiveStroke()
+        }
+        return true
+    }
+
+    /** Cancels a live touch without completing it (e.g. participant disconnected mid-drag). */
+    fun touchCancel() {
+        synchronized(liveTouchLock) {
+            liveActive = false
+            liveSegmentInFlight = false
+            livePendingUp = false
+            liveStroke = null
+        }
+    }
+
+    private fun dispatchLive(stroke: GestureDescription.StrokeDescription): Boolean {
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                continueLiveStroke()
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                synchronized(liveTouchLock) {
+                    liveActive = false
+                    liveSegmentInFlight = false
+                    liveStroke = null
+                }
+            }
+        }
+        return try {
+            dispatchGesture(gesture, callback, null)
+        } catch (e: Exception) {
+            synchronized(liveTouchLock) {
+                liveActive = false
+                liveSegmentInFlight = false
+                liveStroke = null
+            }
+            false
+        }
+    }
+
+    /** Fires from a completed segment's callback, or immediately if none was in flight. */
+    private fun continueLiveStroke() {
+        val prev: GestureDescription.StrokeDescription?
+        val fromX: Float
+        val fromY: Float
+        val toX: Float
+        val toY: Float
+        val finishing: Boolean
+        synchronized(liveTouchLock) {
+            if (!liveActive) {
+                liveSegmentInFlight = false
+                return
+            }
+            prev = liveStroke
+            fromX = liveLastX
+            fromY = liveLastY
+            toX = liveTargetX
+            toY = liveTargetY
+            finishing = livePendingUp
+            if (prev == null) {
+                liveActive = false
+                liveSegmentInFlight = false
+                return
+            }
+            if (fromX == toX && fromY == toY && !finishing) {
+                // Nothing moved since the last segment: idle until the next
+                // touchMove/touchUp call kicks this off again.
+                liveSegmentInFlight = false
+                return
+            }
+        }
+        val path = Path().apply {
+            moveTo(fromX, fromY)
+            if (fromX != toX || fromY != toY) {
+                lineTo(toX, toY)
+            }
+        }
+        val next = try {
+            prev!!.continueStroke(path, 0, LIVE_SEGMENT_MS, !finishing)
+        } catch (e: Exception) {
+            synchronized(liveTouchLock) {
+                liveActive = false
+                liveSegmentInFlight = false
+                liveStroke = null
+            }
+            return
+        }
+        synchronized(liveTouchLock) {
+            liveStroke = next
+            liveLastX = toX
+            liveLastY = toY
+            if (finishing) {
+                liveActive = false
+            }
+        }
+        val gesture = GestureDescription.Builder().addStroke(next).build()
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                if (!finishing) {
+                    continueLiveStroke()
+                } else {
+                    synchronized(liveTouchLock) { liveStroke = null }
+                }
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                synchronized(liveTouchLock) {
+                    liveActive = false
+                    liveSegmentInFlight = false
+                    liveStroke = null
+                }
+            }
+        }
+        try {
+            dispatchGesture(gesture, callback, null)
+        } catch (e: Exception) {
+            synchronized(liveTouchLock) {
+                liveActive = false
+                liveSegmentInFlight = false
+                liveStroke = null
+            }
         }
     }
 

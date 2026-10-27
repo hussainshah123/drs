@@ -38,8 +38,16 @@ export class ScreenShare {
   /**
    * acquire returns the shared capture stream, starting it (and the foreground
    * service + MediaProjection prompt) on first use. Each caller must release().
+   * fps and resolutionScale (Android only) are passed to the patched
+   * react-native-webrtc native capturer — see patches/react-native-webrtc+*.patch.
+   * Lowering resolutionScale is the lever that actually buys headroom on the
+   * forced software VP8 encoder (peer.ts); raising fps without it risks
+   * overloading the phone's CPU badly enough to drop the connection (seen at
+   * 60fps/full-resolution — reconnect loops, "unavailable" on the viewer).
+   * Both are ignored once a capture is already running (fixed for its
+   * lifetime); release() and acquire() again to change them.
    */
-  async acquire(): Promise<MediaStream> {
+  async acquire(fps?: number, resolutionScale?: number): Promise<MediaStream> {
     this.refCount += 1;
     if (this.stream) {
       return this.stream;
@@ -47,7 +55,7 @@ export class ScreenShare {
     if (this.starting) {
       return this.starting;
     }
-    this.starting = this.begin();
+    this.starting = this.begin(fps, resolutionScale);
     try {
       return await this.starting;
     } finally {
@@ -55,17 +63,28 @@ export class ScreenShare {
     }
   }
 
-  private async begin(): Promise<MediaStream> {
+  private async begin(fps?: number, resolutionScale?: number): Promise<MediaStream> {
     if (Platform.OS === 'ios') {
       // Present the ReplayKit broadcast picker so the user starts the extension.
       log.info('screen', 'presenting iOS broadcast picker');
       showBroadcastPicker();
     } else {
-      log.info('screen', 'requesting screen capture (MediaProjection)');
+      log.info(
+        'screen',
+        `requesting screen capture (MediaProjection, fps=${fps || 'default'}, resolutionScale=${
+          resolutionScale ?? 1
+        })`,
+      );
+    }
+    const android: { resolutionScale: number; fps?: number } = {
+      resolutionScale: resolutionScale ?? 1,
+    };
+    if (fps) {
+      android.fps = fps;
     }
     const stream = (await (
       mediaDevices as any
-    ).getDisplayMedia()) as MediaStream;
+    ).getDisplayMedia({ android })) as MediaStream;
     this.stream = stream;
     this.isPaused = false;
     stream.getTracks().forEach((t: MediaStreamTrack) => {

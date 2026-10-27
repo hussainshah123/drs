@@ -1,17 +1,33 @@
 /**
  * Translates drs.session.v1 InputEvents (the viewer's mouse/keyboard, binary
- * protobuf) into Android AccessibilityService gestures. Mouse-style input is
- * mapped to touch: a left button press-and-release at one spot is a tap, held is
- * a long-press, and a press-move-release is a swipe. Coordinates are normalized
- * [0,1] over the streamed display, which the native layer scales to the screen.
+ * protobuf) into Android AccessibilityService gestures. Coordinates are
+ * normalized [0,1] over the streamed display, which the native layer scales
+ * to the screen.
  *
- * State is per participant (peer) so concurrent viewers do not interfere.
+ * Mouse-down starts a LIVE touch (RemoteControl.touchDown/Move/Up, API 26+):
+ * the phone tracks the operator's mouse in real time, the same way a finger
+ * would, instead of waiting for mouse-up and then replaying the whole
+ * gesture at once — that record-then-replay shape is what made dragging and
+ * scrolling feel delayed. On a pre-API-26 device (or if touchDown ever fails)
+ * this falls back to the old behaviour: record the path, then fire a single
+ * tap/long-press/swipe on release.
+ *
+ * State is per participant (peer) so concurrent viewers do not interfere at
+ * this layer — the phone's one physical touchscreen is still shared, same as
+ * before.
  */
 import {RemoteControl} from '../native/remoteControl';
 import {Button, type SessionMsg} from '../proto/session';
 import {log} from '../core/log';
 
-type Down = {x: number; y: number; t: number; lastX: number; lastY: number};
+type Down = {
+  x: number;
+  y: number;
+  t: number;
+  lastX: number;
+  lastY: number;
+  live: boolean;
+};
 const downs = new Map<number, Down>();
 
 // A few USB HID usages (page 0x07) mapped to Android global actions.
@@ -31,10 +47,16 @@ export async function applyInputEvent(pid: number, input: SessionMsg): Promise<v
     if (input.pointer_button) {
       await pointerButton(pid, input.pointer_button);
     } else if (input.pointer_move) {
+      const x = clamp01(input.pointer_move.x);
+      const y = clamp01(input.pointer_move.y);
       const d = downs.get(pid);
       if (d) {
-        d.lastX = clamp01(input.pointer_move.x);
-        d.lastY = clamp01(input.pointer_move.y);
+        d.lastX = x;
+        d.lastY = y;
+        if (d.live) {
+          // Real-time: the touch tracks the mouse as it moves, not after.
+          await RemoteControl.touchMove(x, y);
+        }
       }
     } else if (input.key) {
       const k = input.key;
@@ -54,11 +76,18 @@ async function pointerButton(pid: number, b: SessionMsg): Promise<void> {
   const button = Number(b.button);
   if (button === Button.LEFT) {
     if (b.down) {
-      downs.set(pid, {x, y, t: Date.now(), lastX: x, lastY: y});
+      const live = await RemoteControl.touchDown(x, y);
+      downs.set(pid, {x, y, t: Date.now(), lastX: x, lastY: y, live});
       return;
     }
     const d = downs.get(pid);
     downs.delete(pid);
+    if (d?.live) {
+      // Already tracked live the whole way — just lift the finger.
+      await RemoteControl.touchUp(d.lastX, d.lastY);
+      return;
+    }
+    // Fallback path (pre-API 26, or touchDown failed): replay once on release.
     const fromX = d ? d.x : x;
     const fromY = d ? d.y : y;
     const toX = d ? d.lastX : x;
@@ -80,5 +109,9 @@ async function pointerButton(pid: number, b: SessionMsg): Promise<void> {
 
 /** forget clears any in-flight gesture state for a participant that left. */
 export function forgetInput(pid: number): void {
+  const d = downs.get(pid);
   downs.delete(pid);
+  if (d?.live) {
+    void RemoteControl.touchCancel();
+  }
 }

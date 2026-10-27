@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.input.InputManager
+import android.media.MediaCodecInfo
+import android.media.MediaCodecList
+import android.os.Build
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
@@ -84,6 +87,66 @@ class RemoteControlModule(private val reactCtx: ReactApplicationContext) :
         promise.resolve(map)
     }
 
+    /**
+     * Checks, for THIS device, whether its real hardware H.264 encoder can
+     * actually handle the given capture size — without encoding a single
+     * frame. This is the per-device "is scrcpy-style hardware encoding safe
+     * here" answer: some devices' hardware AVC encoders reject sizes that
+     * aren't aligned to their macroblock/stride requirements (a common root
+     * cause of "0 frames encoded" for screencast on arbitrary screen
+     * resolutions) — MediaCodecInfo.VideoCapabilities.isSizeSupported() is the
+     * same check the OS itself uses, so trusting it is safer than a hardcoded
+     * device list, and it means every device decides for itself. The JS layer
+     * (peer.ts) uses this to choose the outbound codec per connection, with
+     * software VP8 as the universal fallback when this returns false or the
+     * check itself fails for any reason.
+     */
+    @ReactMethod
+    fun supportsHardwareH264(width: Int, height: Int, promise: Promise) {
+        try {
+            promise.resolve(hasHardwareH264For(width, height))
+        } catch (e: Exception) {
+            Log.w("DrsRemoteControl", "hardware H264 capability check failed", e)
+            promise.resolve(false)
+        }
+    }
+
+    private fun hasHardwareH264For(width: Int, height: Int): Boolean {
+        if (width <= 0 || height <= 0) {
+            return false
+        }
+        val mimeType = "video/avc"
+        val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+        for (info in codecList.codecInfos) {
+            if (!info.isEncoder || !isHardwareAccelerated(info)) {
+                continue
+            }
+            if (!info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }) {
+                continue
+            }
+            try {
+                val video = info.getCapabilitiesForType(mimeType).videoCapabilities
+                if (video != null && video.isSizeSupported(width, height)) {
+                    return true
+                }
+            } catch (e: Exception) {
+                // This codec rejected these params outright — keep checking
+                // the rest; a device can expose more than one AVC encoder.
+            }
+        }
+        return false
+    }
+
+    private fun isHardwareAccelerated(info: MediaCodecInfo): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return info.isHardwareAccelerated
+        }
+        // Pre-Q has no isHardwareAccelerated() API: software codecs are
+        // namespaced OMX.google.* (and, on newer Android, c2.android.*).
+        val name = info.name.lowercase()
+        return !(name.startsWith("omx.google.") || name.startsWith("c2.android."))
+    }
+
     @ReactMethod
     fun tap(x: Double, y: Double, promise: Promise) {
         promise.resolve(service()?.tap(x, y) ?: false)
@@ -97,6 +160,33 @@ class RemoteControlModule(private val reactCtx: ReactApplicationContext) :
     @ReactMethod
     fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, durationMs: Double, promise: Promise) {
         promise.resolve(service()?.swipe(x1, y1, x2, y2, durationMs.toLong()) ?: false)
+    }
+
+    /**
+     * Live touch tracking (API 26+): starts a real touch at this position that
+     * stays down until touchUp/touchCancel. Resolves false pre-API 26 or on
+     * failure — the JS layer falls back to tap/swipe (record-then-replay) in
+     * that case.
+     */
+    @ReactMethod
+    fun touchDown(x: Double, y: Double, promise: Promise) {
+        promise.resolve(service()?.touchDown(x, y) ?: false)
+    }
+
+    @ReactMethod
+    fun touchMove(x: Double, y: Double, promise: Promise) {
+        promise.resolve(service()?.touchMove(x, y) ?: false)
+    }
+
+    @ReactMethod
+    fun touchUp(x: Double, y: Double, promise: Promise) {
+        promise.resolve(service()?.touchUp(x, y) ?: false)
+    }
+
+    @ReactMethod
+    fun touchCancel(promise: Promise) {
+        service()?.touchCancel()
+        promise.resolve(null)
     }
 
     @ReactMethod

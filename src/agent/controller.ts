@@ -185,6 +185,16 @@ export class AgentController {
   private localInputLockQueue: Promise<void> = Promise.resolve();
   private sessionOf = new Map<number, string>(); // participantId -> sessionId
   private sessions = new Map<string, SessionMeta>();
+  // Participants whose SessionOffer is currently being established (screen
+  // capture / MediaProjection prompt pending, peer connection being built).
+  // Guards against a retried/duplicate offer for the same participant tearing
+  // down and restarting that in-flight work — e.g. the operator's browser
+  // times out waiting for an answer (because the device owner hasn't tapped
+  // the capture prompt yet) and resends the offer. Without this, the resend
+  // used to closePeer() + re-run the whole capture/activity-launch sequence
+  // while the first MediaProjection prompt was still on screen, which could
+  // show as the capture prompt appearing twice in a row for one connect.
+  private connectingPids = new Set<number>();
   private state: ControllerState;
   private listeners = new Set<(s: ControllerState) => void>();
   private api: Api;
@@ -323,7 +333,7 @@ export class AgentController {
         'ctrl',
         'starting screen sharing (grant the prompt on the device)',
       );
-      await this.screen.acquire(); // held reference; not released until stopSharing
+      await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale); // held reference; not released until stopSharing
       this.screenHeld = true;
       this.patch({
         sharing: true,
@@ -364,7 +374,7 @@ export class AgentController {
       return;
     }
     if (!this.screenHeld) {
-      await this.screen.acquire();
+      await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale);
       this.screenHeld = true;
     }
     this.screen.setPaused(true);
@@ -546,6 +556,19 @@ export class AgentController {
     if (!pid || !sessionId) {
       return;
     }
+    if (this.connectingPids.has(pid)) {
+      // A connect for this participant is already being established (likely
+      // the operator resending the offer because the device owner hasn't
+      // responded to the capture prompt yet). Ignore the resend instead of
+      // tearing down and restarting — that restart is what could show the
+      // capture prompt a second time for what is really one connect attempt.
+      log.info(
+        'ctrl',
+        `ignoring duplicate/overlapping session offer from participant ${pid} — a connect is already in progress`,
+      );
+      return;
+    }
+    this.connectingPids.add(pid);
     log.info('ctrl', `session offer from participant ${pid}`);
 
     if (this.screen.active && this.screen.paused) {
@@ -591,7 +614,15 @@ export class AgentController {
         onInput: input => this.onSessionInput(pid, input),
         onControl: control => this.onSessionControl(pid, control),
         onConnected: () => this.onPeerConnected(pid),
-        onFailed: () => log.warn('ctrl', `peer ${pid} failed`),
+        onFailed: () => {
+          // Was a no-op log before: a failed ICE/DTLS connection never
+          // cleaned up this.peers or released the held screen capture
+          // reference, so a later reconnect found a stale, closed Peer still
+          // registered. Route it through the real teardown path instead —
+          // the operator side already retries on its own (schedulePeerReconnect).
+          log.warn('ctrl', `peer ${pid} failed`);
+          this.closePeer(pid);
+        },
       },
     );
     this.peers.set(pid, peer);
@@ -607,16 +638,20 @@ export class AgentController {
         await new Promise<void>(resolve => setTimeout(() => resolve(), 800));
       }
       log.info('ctrl', 'acquiring screen capture for the session');
-      const stream = await this.screen.acquire();
-      // One-time-permission behaviour: keep the capture alive after this session
-      // so later connections reuse it instead of re-prompting. The owner only
-      // ever approves the system prompt on this first connection.
+      const stream = await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale);
+      // Holds an extra reference so capture survives between this peer
+      // disconnecting and the next one connecting, instead of releasing fully
+      // the moment the last viewer leaves. This can skip the re-prompt on
+      // pre-Android-14 devices. It does NOT on Android 14+: the OS itself
+      // enforces a single-use MediaProjection grant there — every new capture
+      // session gets a fresh system prompt regardless of anything this app
+      // does, by design (a 2023 platform hardening change, not a bug here).
       if (this.config.autoShareScreen && !this.screenHeld) {
-        await this.screen.acquire(); // extra retained reference, no new prompt
+        await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale); // extra retained reference
         this.screenHeld = true;
         log.info(
           'ctrl',
-          'holding screen capture for future sessions (one-time grant)',
+          'holding screen capture for future sessions where the OS allows it',
         );
       }
       this.patch({
@@ -624,8 +659,15 @@ export class AgentController {
         screenPaused: this.screen.paused,
         sharing: this.screenHeld,
       });
-      // The track is attached inside answer(), after setRemoteDescription.
-      const answerSdp = await peer.answer(o.sdp, stream, this.screen.paused);
+      // The track is attached inside answer(), after setRemoteDescription. fps
+      // also becomes the outbound RTP sender's maxFramerate (peer.ts).
+      const answerSdp = await peer.answer(
+        o.sdp,
+        stream,
+        this.screen.paused,
+        this.config.captureFps,
+        this.config.captureResolutionScale,
+      );
       this.signal.sendSessionAnswer(sessionId, pid, answerSdp);
       log.info('ctrl', `answered participant ${pid}`);
     } catch (e: any) {
@@ -638,6 +680,8 @@ export class AgentController {
         log.error('ctrl', `failed to answer ${pid}: ${e?.message || e}`);
       }
       this.closePeer(pid);
+    } finally {
+      this.connectingPids.delete(pid);
     }
   }
 

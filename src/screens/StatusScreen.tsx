@@ -259,13 +259,13 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
             <P dim>
               {state.sharing
                 ? state.screenPaused
-                  ? 'Sharing is paused: no video is sent right now, but Android capture stays active. A new operator session resumes sharing automatically without a phone prompt. End screen capture stops it and Android will require consent again.'
+                  ? 'Sharing is paused: no video is sent right now, but Android capture stays active for now. A new operator session resumes it without a new prompt — unless Android itself has already ended the capture in the background (common on Android 14+), in which case the next connection will prompt again regardless.'
                   : Platform.OS === 'ios'
                   ? 'The ReplayKit broadcast is active. Operators can view this device without another prompt while the broadcast stays active. If you stop it or iOS ends it, you must start it again here.'
                   : 'Screen sharing is ON. Operators can view this device now — you can switch apps; capture keeps running.'
                 : Platform.OS === 'ios'
                 ? 'Start screen sharing and confirm Start Broadcast in the iOS picker. The active broadcast is reused for later operator sessions, but iOS requires you to start it again if it ends; it cannot be silently restarted.'
-                : 'You only approve the capture prompt once — on the first connection. After that it stays granted (like a camera permission), so operators reconnect without asking again. You can also pre-approve it now with the button below.'}
+                : 'Each new operator connection may show the Android capture prompt — on Android 14+ this is a one-tap system requirement every time, by Android\'s own design, not something this app can skip. On older Android versions it can sometimes be reused across sessions if you pre-approve it now with the button below.'}
             </P>
             <Button
               title={

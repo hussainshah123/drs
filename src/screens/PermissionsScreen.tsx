@@ -99,7 +99,7 @@ export function PermissionsScreen({
     desc:
       Platform.OS === 'ios'
         ? 'Start a ReplayKit broadcast so an operator can view this screen.'
-        : 'Pause video while keeping Android capture alive. A new operator session resumes it automatically. If capture ends, Android requires consent again.',
+        : 'Pause video while keeping Android capture alive where possible. On Android 14+, the system requires a fresh one-tap consent for every new session regardless — this is an OS policy, not something this app controls.',
     granted: state.sharing || state.screenActive,
     statusText: state.screenPaused
       ? 'Paused (capture active)'
