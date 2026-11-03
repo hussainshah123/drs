@@ -4,6 +4,19 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowBackground">@color/brand_bg</item>
+    </style>
+
+    <!--
+      Shown for the brief window between process start and MainActivity's
+      first frame (AndroidX SplashScreen compat: native Android 12+ animated-
+      icon experience, themed drawable fallback pre-12). MainActivity switches
+      back to AppTheme itself once installSplashScreen() has run.
+    -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brand_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_mark</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
     </style>
 
 </resources>

@@ -375,6 +375,7 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
         </Card>
 
         {/* Activity */}
+        {/*
         <Card>
           <Label>Activity</Label>
           <View style={styles.logBox}>
@@ -395,6 +396,7 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
             )}
           </View>
         </Card>
+        */}
 
         <View style={{ height: 20 }} />
       </ScrollView>

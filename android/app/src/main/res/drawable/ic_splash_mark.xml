@@ -1,0 +1,29 @@
+<!--
+  Brand mark for the splash screen: a central node (this device) orbited by a
+  smaller node (the operator) — "every device, one point of control" as a
+  simple glyph, in the app's orange/black theme.
+-->
+<vector xmlns:android="http://schemas.android.com/apis/res/android"
+    android:width="160dp"
+    android:height="160dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- orbit ring -->
+    <path
+        android:pathData="M20,54 A34,34 0 1,1 88,54 A34,34 0 1,1 20,54"
+        android:strokeColor="#FF7A1A"
+        android:strokeWidth="4"
+        android:fillColor="#00000000" />
+
+    <!-- center node -->
+    <path
+        android:pathData="M40,54 A14,14 0 1,1 68,54 A14,14 0 1,1 40,54"
+        android:fillColor="#FF7A1A" />
+
+    <!-- satellite node -->
+    <path
+        android:pathData="M75,21 A7,7 0 1,1 89,21 A7,7 0 1,1 75,21"
+        android:fillColor="#FF9F45" />
+
+</vector>

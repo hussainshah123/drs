@@ -1,0 +1,7 @@
+<resources>
+    <!-- Brand palette: orange / black, matching the in-app theme (T/C in src/ui). -->
+    <color name="brand_bg">#0A0A0B</color>
+    <color name="brand_panel">#121214</color>
+    <color name="brand_orange">#FF7A1A</color>
+    <color name="brand_orange_light">#FF9F45</color>
+</resources>

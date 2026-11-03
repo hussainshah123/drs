@@ -21,6 +21,7 @@ import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {T} from './src/ui/theme';
 import {EnrollScreen} from './src/screens/EnrollScreen';
 import {SettingsScreen} from './src/screens/SettingsScreen';
+import {SplashScreen} from './src/screens/SplashScreen';
 import {
   clearIdentity,
   loadConfig,
@@ -51,6 +52,14 @@ function App(): React.JSX.Element {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const controllerRef = useRef<AgentController | null>(null);
   const [ctrlTick, setCtrlTick] = useState(0);
+  // Keeps the animated splash up for at least this long so its entrance
+  // animation always gets to play, even when config/identity load instantly.
+  const [minSplashElapsed, setMinSplashElapsed] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setMinSplashElapsed(true), 900);
+    return () => clearTimeout(t);
+  }, []);
 
   // Load persisted state once.
   useEffect(() => {
@@ -160,12 +169,8 @@ function App(): React.JSX.Element {
   };
 
   const content = useMemo(() => {
-    if (route === 'boot' || !config) {
-      return (
-        <View style={styles.center}>
-          <ActivityIndicator color={T.accent} size="large" />
-        </View>
-      );
+    if (route === 'boot' || !config || !minSplashElapsed) {
+      return <SplashScreen />;
     }
     if (route === 'enroll' || !identity) {
       return (
@@ -190,7 +195,7 @@ function App(): React.JSX.Element {
       </View>
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, config, identity, ctrlTick]);
+  }, [route, config, identity, ctrlTick, minSplashElapsed]);
 
   return (
     <SafeAreaProvider>

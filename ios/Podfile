@@ -8,6 +8,15 @@ require Pod::Executable.execute_command('node', ['-p',
 platform :ios, min_ios_version_supported
 prepare_react_native_project!
 
+# Build React Native's core from source instead of downloading the prebuilt
+# React.xcframework from Maven. The prebuilt artifact's Debug/Release swap
+# script and macOS's own download-provenance tagging (com.apple.provenance,
+# which plain `xattr -d` cannot remove) were together producing an
+# unrecoverable "signature of 'React.xcframework' cannot be verified" build
+# failure. Building from source is slower but avoids the prebuilt binary
+# entirely, side-stepping the issue.
+ENV['RCT_USE_PREBUILT_RNCORE'] = '0'
+
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
   Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green

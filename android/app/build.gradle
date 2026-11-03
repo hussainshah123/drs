@@ -121,6 +121,10 @@ android {
 }
 
 dependencies {
+    // Native Android 12+-style splash screen (AndroidX, pure native — no JS/RN
+    // bridge involved), with a themed drawable fallback on older OS versions.
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 

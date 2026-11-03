@@ -16,6 +16,7 @@ import {
 } from 'react-native-webrtc';
 import { log } from '../core/log';
 import { showBroadcastPicker } from './iosPicker';
+import { BackgroundAudio } from '../native/backgroundAudio';
 
 export class ScreenShare {
   private stream: MediaStream | null = null;
@@ -101,6 +102,13 @@ export class ScreenShare {
       });
     });
     log.info('screen', 'screen capture started');
+    // iOS only (no-op on Android, which uses the foreground service instead):
+    // holds the app in the background for as long as sharing runs, so the
+    // ScreenShare extension's socket to this app doesn't get cut when the
+    // operator backgrounds the device.
+    BackgroundAudio.start()
+      .then(() => log.info('screen', 'background keep-alive audio started'))
+      .catch((e: any) => log.warn('screen', `background keep-alive audio failed to start: ${e?.message || e}`));
     return stream;
   }
 
@@ -140,6 +148,9 @@ export class ScreenShare {
     this.isPaused = false;
     log.info('screen', 'screen capture stopped');
     if (wasActive) {
+      BackgroundAudio.stop().catch((e: any) =>
+        log.warn('screen', `background keep-alive audio failed to stop: ${e?.message || e}`),
+      );
       this.onStopped?.();
     }
   }
