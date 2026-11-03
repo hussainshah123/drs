@@ -28,6 +28,8 @@ type DeviceManagementNative = {
   setStreamingActive(active: boolean): Promise<boolean>;
   stopAgentService(): Promise<boolean>;
   launchAgentActivity(): Promise<boolean>;
+  isIgnoringBatteryOptimizations(): Promise<boolean>;
+  requestIgnoreBatteryOptimizations(): Promise<boolean>;
 };
 
 export type ManagedPolicyResult = {
@@ -120,5 +122,26 @@ export const DeviceManagement = {
    */
   launchAgentActivity(): Promise<boolean> {
     return Native ? Native.launchAgentActivity() : Promise.resolve(false);
+  },
+  /**
+   * Whether the OS currently exempts this app from Doze/App Standby battery
+   * optimization. A foreground service alone does not guarantee the
+   * background connection survives long idle periods — this exemption is
+   * the standard additional step (same one messaging/VPN apps use).
+   */
+  isIgnoringBatteryOptimizations(): Promise<boolean> {
+    return Native ? Native.isIgnoringBatteryOptimizations() : Promise.resolve(false);
+  },
+  /**
+   * Shows the system "ignore battery optimizations?" dialog if not already
+   * exempt — a one-time user tap, not something grantable silently even as
+   * Device Owner. Re-check isIgnoringBatteryOptimizations() after the app
+   * resumes to see what the user chose. Does not reach OEM-specific
+   * "autostart"/battery-manager restrictions (Xiaomi/MIUI, Oppo, Vivo,
+   * Huawei, Samsung) — those need the IT admin to allow this app in the
+   * device's own battery manager, which has no standard Android API.
+   */
+  requestIgnoreBatteryOptimizations(): Promise<boolean> {
+    return Native ? Native.requestIgnoreBatteryOptimizations() : Promise.resolve(false);
   },
 };

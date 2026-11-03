@@ -6,10 +6,12 @@
  * messages read; notifications (banner / tray / fullscreen) also offer Acknowledge
  * and Dismiss. Each change is reported to the operator (SignalMessage.message_ack).
  */
-import React, {useEffect, useReducer, useState} from 'react';
+import React, {useEffect, useReducer, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
@@ -54,12 +56,46 @@ const STATUS_LABEL: Record<InboxMessage['status'], string> = {
 
 export function InboxScreen({controller}: {controller: AgentController}) {
   const [, bump] = useReducer((x: number) => x + 1, 0);
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     void loadInbox().then(bump);
     void controller.refreshHistory();
     return subscribeInbox(bump);
   }, [controller]);
+
+  useEffect(() => {
+    // This app builds with edgeToEdgeEnabled (android/gradle.properties), so
+    // the window stays full-height even with windowSoftInputMode="adjustResize"
+    // — KeyboardAvoidingView's height/padding behavior never sees a resize to
+    // react to, leaving the composer hidden behind the keyboard. Shift the
+    // conversation + composer up by a plain transform instead of resizing
+    // them: a resize re-lays-out the (inverted) FlatList every frame, which is
+    // what made earlier padding/LayoutAnimation attempts here visibly janky.
+    // useNativeDriver: true runs this entirely on the UI thread, so it stays
+    // smooth regardless of what the JS thread is doing.
+    if (Platform.OS !== 'android') {
+      return;
+    }
+    const show = Keyboard.addListener('keyboardDidShow', e => {
+      Animated.timing(keyboardOffset, {
+        toValue: e.endCoordinates.height,
+        duration: e.duration && e.duration > 0 ? e.duration : 220,
+        useNativeDriver: true,
+      }).start();
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', e => {
+      Animated.timing(keyboardOffset, {
+        toValue: 0,
+        duration: e?.duration && e.duration > 0 ? e.duration : 180,
+        useNativeDriver: true,
+      }).start();
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [keyboardOffset]);
 
   const messages = getInbox();
   const history = getHistoryState();
@@ -76,15 +112,8 @@ export function InboxScreen({controller}: {controller: AgentController}) {
 
   const items = buildItems(messages);
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.wrap}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ChatHeader
-        title="Messages"
-        subtitle="From your IT support team"
-        left={<ChatAvatar name="Support" size={40} group />}
-      />
+  const conversation = (
+    <>
       <FlatList
         data={items}
         inverted={items.length > 0}
@@ -136,7 +165,27 @@ export function InboxScreen({controller}: {controller: AgentController}) {
         }
       />
       <Composer controller={controller} />
-    </KeyboardAvoidingView>
+    </>
+  );
+
+  return (
+    <View style={styles.wrap}>
+      <ChatHeader
+        title="Messages"
+        subtitle="From your IT support team"
+        left={<ChatAvatar name="Support" size={40} group />}
+      />
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView style={styles.body} behavior="padding">
+          {conversation}
+        </KeyboardAvoidingView>
+      ) : (
+        <Animated.View
+          style={[styles.body, {transform: [{translateY: Animated.multiply(keyboardOffset, -1)}]}]}>
+          {conversation}
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -322,6 +371,7 @@ function Bubble({
 
 const styles = StyleSheet.create({
   wrap: {flex: 1, backgroundColor: C.bg},
+  body: {flex: 1},
   listPad: {paddingHorizontal: 12, paddingTop: 10},
   emptyPad: {flexGrow: 1},
   dayRow: {alignItems: 'center', marginVertical: 12},

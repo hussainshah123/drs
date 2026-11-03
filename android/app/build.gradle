@@ -85,6 +85,19 @@ android {
         versionCode 1
         versionName "1.0"
     }
+    // react-native-webrtc's GetUserMediaImpl calls CompletableFuture.orTimeout(),
+    // which the Android platform itself only implements from API 31 onward —
+    // below that, the plain java.util.concurrent.CompletableFuture class has
+    // no such method at all (no API-level check catches this at build time
+    // since the call lives in a prebuilt AAR, not our own source). Confirmed
+    // crashing on a real API 29 device (NoSuchMethodError) right as the
+    // MediaProjection consent result comes back, while minSdkVersion is 24 —
+    // this app is expected to run there. Desugaring backports it.
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+        coreLibraryDesugaringEnabled true
+    }
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -116,4 +129,6 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

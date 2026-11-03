@@ -4,6 +4,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the app ask (one-time system dialog) to be exempted from Doze/App
+         Standby battery optimization, so the background connection survives
+         idle periods instead of being throttled. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Foreground services and screen capture -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

@@ -112,6 +112,12 @@ function App(): React.JSX.Element {
     // killing the process when the app is swiped from recents or backgrounded, so
     // the device stays online and remotely viewable.
     void DeviceManagement.startAgentService();
+    // The foreground service alone does not survive Doze/App Standby battery
+    // throttling over long idle periods on many devices. Ask once to be
+    // exempted (standard system dialog, same as a messaging/VPN app would);
+    // a no-op if already exempt, and harmless to call again if the device
+    // owner dismissed it — it just won't re-show until they open Settings.
+    void DeviceManagement.requestIgnoreBatteryOptimizations();
     setCtrlTick(t => t + 1);
     // No cleanup that stops the controller: re-renders/double-mounts must not
     // kill the live connection. Teardown happens in onUnenroll / onSaveSettings.

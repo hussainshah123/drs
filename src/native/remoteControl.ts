@@ -24,6 +24,7 @@ type RemoteControlNative = {
   globalAction(action: string): Promise<boolean>;
   inputText(text: string): Promise<boolean>;
   setLocalInputBlocked(blocked: boolean): Promise<boolean>;
+  armCaptureConsentAutoAccept(): Promise<boolean>;
 };
 
 const Native = (NativeModules.RemoteControlModule || null) as RemoteControlNative | null;
@@ -104,5 +105,15 @@ export const RemoteControl = {
   },
   setLocalInputBlocked(blocked: boolean) {
     return Native ? Native.setLocalInputBlocked(blocked) : Promise.resolve(false);
+  },
+  /**
+   * Arms a short window (see DrsAccessibilityService.armCaptureConsentAutoAccept)
+   * in which the accessibility service auto-taps Android's own screen-capture
+   * system dialog. Call immediately before getDisplayMedia() — resolves false
+   * only when the accessibility service isn't running, in which case the
+   * system dialog still appears and needs a manual tap, same as before this.
+   */
+  armCaptureConsentAutoAccept() {
+    return Native ? Native.armCaptureConsentAutoAccept() : Promise.resolve(false);
   },
 };

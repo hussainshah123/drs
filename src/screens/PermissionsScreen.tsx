@@ -50,17 +50,22 @@ export function PermissionsScreen({
 }) {
   const [state, setState] = useState<ControllerState>(controller.getState());
   const [perms, setPerms] = useState<PermissionState | null>(null);
+  const [batteryExempt, setBatteryExempt] = useState<boolean | null>(null);
 
   const refreshPerms = async () => setPerms(await getPermissionState());
+  const refreshBattery = async () =>
+    setBatteryExempt(await DeviceManagement.isIgnoringBatteryOptimizations());
 
   useEffect(() => controller.subscribe(setState), [controller]);
   useEffect(() => {
     void refreshPerms();
+    void refreshBattery();
     const sub = AppState.addEventListener('change', s => {
       if (s === 'active') {
         void controller.refreshAccessibility();
         void controller.refreshDeviceAdmin();
         void refreshPerms();
+        void refreshBattery();
       }
     });
     return () => sub.remove();
@@ -168,6 +173,30 @@ export function PermissionsScreen({
       granted: false,
       warn: true,
       statusText: Platform.OS === 'ios' ? 'View only' : 'N/A',
+    });
+  }
+
+  // Background persistence (Android): a foreground service alone can still
+  // be throttled by Doze/App Standby after long idle periods — this exemption
+  // is the standard extra step (same as messaging/VPN apps).
+  if (isAndroid && DeviceManagement.available()) {
+    rows.push({
+      key: 'battery',
+      icon: 'shield',
+      title: 'Stay connected in background',
+      desc:
+        'Exempt this app from battery optimization so it keeps its connection open when backgrounded or idle. Some phone brands (Xiaomi, Oppo, Vivo, Huawei, Samsung) have their own separate battery manager — this does not reach that; ask your IT admin if the device still drops connection after enabling this.',
+      granted: !!batteryExempt,
+      statusText: batteryExempt === null ? 'Checking…' : batteryExempt ? 'Exempt' : 'Not exempt',
+      action: batteryExempt
+        ? undefined
+        : {
+            label: 'Allow',
+            onPress: async () => {
+              await DeviceManagement.requestIgnoreBatteryOptimizations();
+              await refreshBattery();
+            },
+          },
     });
   }
 

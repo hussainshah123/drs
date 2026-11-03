@@ -12,7 +12,18 @@
  *
  * It owns no WebRTC or OS state; the orchestrator (agent/controller) wires it to
  * screen capture and input injection.
+ *
+ * Heartbeat reliability note: confirmed on-device, JS's own setInterval-driven
+ * heartbeat can simply stop firing for minutes with the screen off, while
+ * WebRTC's native, event-driven connection work keeps running fine in the same
+ * process (it isn't timer-based). The gateway expires device presence after 3
+ * missed intervals regardless of whether a session is still streaming — that
+ * produced exactly "streaming works, device shows offline". AgentService.kt's
+ * native Handler loop (not tied to screen/display state) ticks independently
+ * of JS timers and emits DRS_HEARTBEAT_TICK_EVENT; this sends a heartbeat
+ * immediately on receipt, on top of (not instead of) the JS interval below.
  */
+import {DeviceEventEmitter, Platform} from 'react-native';
 import {
   ClientType,
   Platform as PlatformEnum,
@@ -25,6 +36,9 @@ import {
 } from '../proto/signal';
 import {log} from '../core/log';
 import type {DeviceToken} from '../core/token';
+
+/** Must match AgentService.HEARTBEAT_EVENT (android/.../remote/AgentService.kt). */
+const DRS_HEARTBEAT_TICK_EVENT = 'drs_heartbeat_tick';
 
 export type SignalEvents = {
   onRegistered?: (deviceId: string, inventoryRequested: boolean) => void;
@@ -75,6 +89,7 @@ export class SignalClient {
   private status: SignalStatus = 'idle';
   private activeSessions = new Set<string>();
   private startedAt = Date.now();
+  private nativeHeartbeatSub: {remove: () => void} | null = null;
 
   constructor(
     private getToken: () => Promise<DeviceToken>,
@@ -89,12 +104,42 @@ export class SignalClient {
     }
     this.stopped = false;
     this.backoff = 1000;
+    this.subscribeNativeHeartbeatTick();
     void this.connect();
+  }
+
+  /**
+   * Listens for AgentService.kt's native Handler-driven tick (not screen/JS-
+   * timer dependent — see the class doc comment) and sends a heartbeat
+   * immediately on each one. A no-op on iOS (no such native emitter there) and
+   * safe to call more than once.
+   */
+  private subscribeNativeHeartbeatTick(): void {
+    if (this.nativeHeartbeatSub || Platform.OS !== 'android') {
+      return;
+    }
+    try {
+      this.nativeHeartbeatSub = DeviceEventEmitter.addListener(
+        DRS_HEARTBEAT_TICK_EVENT,
+        () => this.sendHeartbeatNow(),
+      );
+    } catch (e: any) {
+      log.warn('signal', `native heartbeat tick subscription failed: ${e?.message || e}`);
+    }
+  }
+
+  /** Sends a heartbeat right now if registered; harmless no-op otherwise. */
+  sendHeartbeatNow(): void {
+    if (this.status === 'registered') {
+      this.sendHeartbeat();
+    }
   }
 
   /** stop closes the connection for good. */
   stop(): void {
     this.stopped = true;
+    this.nativeHeartbeatSub?.remove();
+    this.nativeHeartbeatSub = null;
     this.clearTimers();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -318,8 +363,8 @@ export class SignalClient {
     });
   }
 
-  sendTokenRefresh(token: string) {
-    this.rawSend({token_refresh: {token}});
+  sendTokenRefresh(token: string): boolean {
+    return this.rawSend({token_refresh: {token}});
   }
 
   sendSessionAnswer(sessionId: string, toParticipantId: number, sdp: string) {
@@ -550,7 +595,18 @@ export class SignalClient {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
     }
-    const every = Math.max(intervalSeconds, 5) * 1000;
+    // The gateway expires presence (marks the device offline) after 3 missed
+    // intervals — e.g. 90s at the default 30s. A single delayed or dropped
+    // tick (backgrounded JS scheduling, or a burst of other signalling work —
+    // a flurry of session connects/disconnects has been enough in testing)
+    // must not alone be able to burn through that budget. Send well inside
+    // the server's own interval (floored at 10s) so several ticks have to be
+    // missed in a row before the server's timeout is even a risk, and send
+    // one immediately on every (re)registration instead of waiting a full
+    // interval first — back-to-back reconnects must not each start with a
+    // silent gap before their first heartbeat.
+    const every = Math.max(1000, Math.min(intervalSeconds * 1000, 10_000));
+    this.sendHeartbeat();
     this.heartbeatTimer = setInterval(() => this.sendHeartbeat(), every);
   }
 
@@ -568,7 +624,17 @@ export class SignalClient {
         if (this.stopped) {
           return;
         }
-        this.sendTokenRefresh(tok.token);
+        // rawSend (inside sendTokenRefresh) silently drops the frame when the
+        // socket isn't open at this exact instant (e.g. mid-reconnect) — if we
+        // trusted that as success and rescheduled against the new token's far-
+        // off expiresAt, the gateway's own deadline (never told about this
+        // refresh) would still fire token_expired later with no further retry
+        // attempted in between. Retry soon instead of assuming it landed.
+        if (!this.sendTokenRefresh(tok.token)) {
+          log.warn('signal', 'token refresh could not be sent (socket not open); retrying shortly');
+          this.scheduleRefresh(Date.now() + 10_000);
+          return;
+        }
         this.scheduleRefresh(tok.expiresAt);
         log.info('signal', 'token refreshed');
       } catch (e: any) {

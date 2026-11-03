@@ -5,7 +5,10 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -27,12 +30,45 @@ class DrsAccessibilityService : AccessibilityService() {
         var instance: DrsAccessibilityService? = null
             private set
 
+        private const val TAG = "DrsAccessibility"
+
         /**
-         * Duration of each live-touch segment. Short enough to feel immediate
-         * (a new mouse position is reflected within roughly one segment), long
-         * enough that dispatchGesture isn't called at an unreasonable rate.
+         * Duration of each live-touch segment, including the initial dwell.
+         * Reverted from an elapsed-wall-clock-time version that broke control
+         * entirely on-device (root cause not yet confirmed by logs — this is
+         * the proven-working value from before that change). See
+         * continueLiveStroke()'s log output if retuning this again.
          */
         private const val LIVE_SEGMENT_MS = 16L
+
+        /**
+         * How long armCaptureConsentAutoAccept() stays armed. The dialog is
+         * Android's own system prompt (MediaProjectionManager), not ours — it
+         * normally appears within a second of requesting capture, but a slow
+         * OEM permission-controller process can take longer.
+         */
+        private const val CAPTURE_CONSENT_ARM_TIMEOUT_MS = 15_000L
+
+        /**
+         * Fallback button labels for the screen-capture system dialog when its
+         * accept button isn't android:id/button1 (seen on some OEM skins).
+         * Deliberately narrow — this only runs while armed, i.e. right after
+         * this app itself requested capture, so a false match has to be a
+         * same-moment, same-foreground-window coincidence.
+         */
+        private val CAPTURE_ACCEPT_LABELS =
+            setOf("start now", "start", "allow", "share now", "begin now", "cast")
+
+        /**
+         * Android 14+'s screen-share dialog adds a mode picker (AOSP SystemUI,
+         * resource-id screen_share_mode_options) defaulted to "Share one app".
+         * Confirming through with that selected never starts our capture — it
+         * waits on an app pick instead — which showed up as a NotAllowedError
+         * right after the prompt and the dialog reappearing on every retry.
+         */
+        private const val MODE_SPINNER_ID = "com.android.systemui:id/screen_share_mode_options"
+        private val ENTIRE_SCREEN_LABELS =
+            setOf("share entire screen", "entire screen", "whole screen", "share full screen")
     }
 
     override fun onServiceConnected() {
@@ -50,9 +86,197 @@ class DrsAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // This service drives input only; it does not react to a11y events.
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    @Volatile
+    private var captureConsentArmed = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var disarmCaptureConsent: Runnable? = null
+
+    /**
+     * Arms a short window in which this service will auto-tap the device's
+     * own screen-capture system dialog (MediaProjectionManager) — the "Start
+     * now" prompt Android requires before any app can start screen capture,
+     * including on every reconnect on Android 14+ (OS policy, not something
+     * app code can skip). Mirrors config.autoShareScreen/autoAcceptConsent's
+     * existing "fully managed, unattended" intent: those already auto-accept
+     * this app's own consent step; this extends the same policy to the OS's
+     * prompt so an enrolled, managed device doesn't sit waiting for someone
+     * to physically tap a dialog it can't see (screen off/locked, unattended).
+     * Call this immediately before requesting capture (screenShare.ts's
+     * getDisplayMedia); it self-disarms after one click or after the timeout.
+     */
+    fun armCaptureConsentAutoAccept() {
+        captureConsentArmed = true
+        disarmCaptureConsent?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable { captureConsentArmed = false }
+        disarmCaptureConsent = r
+        mainHandler.postDelayed(r, CAPTURE_CONSENT_ARM_TIMEOUT_MS)
+        // The dialog may already be on screen by the time the bridge call
+        // lands here (race with the native getDisplayMedia call) — try once
+        // right away instead of waiting for the next window-state event.
+        if (tryAcceptCaptureDialog()) {
+            captureConsentArmed = false
+            disarmCaptureConsent?.let { mainHandler.removeCallbacks(it) }
+        }
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!captureConsentArmed) {
+            return
+        }
+        val type = event?.eventType
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) {
+            if (tryAcceptCaptureDialog()) {
+                captureConsentArmed = false
+                disarmCaptureConsent?.let { mainHandler.removeCallbacks(it) }
+            }
+        }
+    }
+
     override fun onInterrupt() {}
+
+    /**
+     * Drives the capture dialog one step closer to accepted and reports
+     * whether that step was the final confirm (only then should the caller
+     * disarm) — getting there can take a couple of steps (open the mode
+     * picker, pick "entire screen", then confirm), each one driven by the
+     * next onAccessibilityEvent as the UI updates.
+     */
+    private fun tryAcceptCaptureDialog(): Boolean {
+        val root = rootInActiveWindow ?: return false
+
+        // The mode picker's option list, when open, is a ListView whose rows
+        // use android:id/text1 — require that id so this only ever matches an
+        // open list row, never the picker's own closed-state label (same
+        // text, but no id there), which would tap-reopen it forever.
+        val openOption = findByTextAndId(root, ENTIRE_SCREEN_LABELS, "android:id/text1")
+        if (openOption != null) {
+            // Reported non-clickable in the accessibility tree (it's an
+            // AdapterView row, selected via touch, not a plain click target),
+            // so tap its on-screen position directly rather than
+            // performAction(CLICK), which doesn't register a selection here.
+            tapNodeCenter(openOption)
+            return false
+        }
+
+        val spinner = findByResourceId(root, MODE_SPINNER_ID)
+        if (spinner != null) {
+            val current = firstText(spinner)?.trim()?.lowercase() ?: ""
+            if (current !in ENTIRE_SCREEN_LABELS) {
+                // Still on the wrong default — open the picker; the next event
+                // (its option list appearing) is handled by the branch above.
+                if (!spinner.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    tapNodeCenter(spinner)
+                }
+                return false
+            }
+        }
+
+        // No mode picker (older, single-step dialog) or it already reads
+        // "entire screen" — safe to confirm now, whatever this button is
+        // labeled ("Start now", "Share screen", ...).
+        val target = findClickableByResourceId(root, "android:id/button1")
+            ?: findClickableByText(root, CAPTURE_ACCEPT_LABELS)
+            ?: return false
+        val clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (clicked) {
+            Log.i(TAG, "auto-accepted the screen-capture system prompt")
+        }
+        return clicked
+    }
+
+    private fun tapNodeCenter(node: AccessibilityNodeInfo): Boolean {
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
+        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 1)
+        return dispatch(GestureDescription.Builder().addStroke(stroke).build())
+    }
+
+    /** First non-blank text found in this node or its descendants (depth-first). */
+    private fun firstText(node: AccessibilityNodeInfo?): String? {
+        if (node == null) {
+            return null
+        }
+        val text = node.text?.toString()
+        if (!text.isNullOrBlank()) {
+            return text
+        }
+        for (i in 0 until node.childCount) {
+            val found = firstText(node.getChild(i))
+            if (found != null) {
+                return found
+            }
+        }
+        return null
+    }
+
+    private fun findByResourceId(node: AccessibilityNodeInfo?, resourceId: String): AccessibilityNodeInfo? {
+        if (node == null) {
+            return null
+        }
+        if (node.viewIdResourceName == resourceId) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val found = findByResourceId(node.getChild(i), resourceId)
+            if (found != null) {
+                return found
+            }
+        }
+        return null
+    }
+
+    private fun findByTextAndId(node: AccessibilityNodeInfo?, labels: Set<String>, resourceId: String): AccessibilityNodeInfo? {
+        if (node == null) {
+            return null
+        }
+        val text = node.text?.toString()?.trim()?.lowercase()
+        if (node.viewIdResourceName == resourceId && text != null && labels.contains(text)) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val found = findByTextAndId(node.getChild(i), labels, resourceId)
+            if (found != null) {
+                return found
+            }
+        }
+        return null
+    }
+
+    private fun findClickableByResourceId(node: AccessibilityNodeInfo?, resourceId: String): AccessibilityNodeInfo? {
+        if (node == null) {
+            return null
+        }
+        if (node.isClickable && node.viewIdResourceName == resourceId) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val found = findClickableByResourceId(node.getChild(i), resourceId)
+            if (found != null) {
+                return found
+            }
+        }
+        return null
+    }
+
+    private fun findClickableByText(node: AccessibilityNodeInfo?, labels: Set<String>): AccessibilityNodeInfo? {
+        if (node == null) {
+            return null
+        }
+        val text = node.text?.toString()?.trim()?.lowercase()
+        if (node.isClickable && text != null && labels.contains(text)) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val found = findClickableByText(node.getChild(i), labels)
+            if (found != null) {
+                return found
+            }
+        }
+        return null
+    }
 
     /** Real display size in pixels, including system bars. */
     fun screenSize(): Pair<Int, Int> {
@@ -138,6 +362,10 @@ class DrsAccessibilityService : AccessibilityService() {
     private var liveSegmentInFlight = false
     private var livePendingUp = false
     private var liveActive = false
+    // Counts consecutive system cancellations within one drag, so an
+    // auto-restart loop (see continueLiveStroke's onCancelled) can give up
+    // instead of retrying forever on a device that drops every gesture.
+    private var liveCancelStreak = 0
 
     private fun liveTouchSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
 
@@ -146,7 +374,18 @@ class DrsAccessibilityService : AccessibilityService() {
         if (!liveTouchSupported()) {
             return false
         }
+        liveCancelStreak = 0
         val (x, y) = px(nx, ny)
+        return startLiveTouchAtPx(x, y)
+    }
+
+    /** Starts a live touch at a pixel position — used by touchDown, and to
+     * restart in place after continueLiveStroke's onCancelled mid-drag. */
+    private fun startLiveTouchAtPx(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
+        // A short initial dwell so the OS registers a real ACTION_DOWN before
+        // any movement begins — too short and some devices drop it.
+        val stroke = GestureDescription.StrokeDescription(path, 0, LIVE_SEGMENT_MS, true)
         synchronized(liveTouchLock) {
             liveLastX = x
             liveLastY = y
@@ -155,12 +394,11 @@ class DrsAccessibilityService : AccessibilityService() {
             livePendingUp = false
             liveActive = true
             liveSegmentInFlight = true
+            // Set together with the other state, before dispatch, so a
+            // same-thread-reentrant or unexpectedly-fast callback can never
+            // observe liveActive=true with liveStroke still null.
+            liveStroke = stroke
         }
-        val path = Path().apply { moveTo(x, y) }
-        // A short initial dwell so the OS registers a real ACTION_DOWN before
-        // any movement begins — too short and some devices drop it.
-        val stroke = GestureDescription.StrokeDescription(path, 0, LIVE_SEGMENT_MS, true)
-        synchronized(liveTouchLock) { liveStroke = stroke }
         return dispatchLive(stroke)
     }
 
@@ -231,6 +469,7 @@ class DrsAccessibilityService : AccessibilityService() {
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "live touch: initial dispatch cancelled by the system")
                 synchronized(liveTouchLock) {
                     liveActive = false
                     liveSegmentInFlight = false
@@ -238,16 +477,25 @@ class DrsAccessibilityService : AccessibilityService() {
                 }
             }
         }
-        return try {
+        val accepted = try {
             dispatchGesture(gesture, callback, null)
         } catch (e: Exception) {
+            Log.w(TAG, "live touch: initial dispatchGesture threw", e)
+            false
+        }
+        if (!accepted) {
+            // Rejected synchronously (e.g. another gesture already in
+            // flight) — the callback above will never fire for this attempt,
+            // so state must be cleared here or every later touchMove/touchUp
+            // would wait forever for a segment that was never accepted.
+            Log.w(TAG, "live touch: initial dispatchGesture rejected")
             synchronized(liveTouchLock) {
                 liveActive = false
                 liveSegmentInFlight = false
                 liveStroke = null
             }
-            false
         }
+        return accepted
     }
 
     /** Fires from a completed segment's callback, or immediately if none was in flight. */
@@ -290,6 +538,7 @@ class DrsAccessibilityService : AccessibilityService() {
         val next = try {
             prev!!.continueStroke(path, 0, LIVE_SEGMENT_MS, !finishing)
         } catch (e: Exception) {
+            Log.w(TAG, "live touch: continueStroke threw", e)
             synchronized(liveTouchLock) {
                 liveActive = false
                 liveSegmentInFlight = false
@@ -308,10 +557,14 @@ class DrsAccessibilityService : AccessibilityService() {
         val gesture = GestureDescription.Builder().addStroke(next).build()
         val callback = object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
+                liveCancelStreak = 0
                 if (!finishing) {
                     continueLiveStroke()
                 } else {
-                    synchronized(liveTouchLock) { liveStroke = null }
+                    synchronized(liveTouchLock) {
+                        liveStroke = null
+                        liveSegmentInFlight = false
+                    }
                 }
             }
 
@@ -321,11 +574,37 @@ class DrsAccessibilityService : AccessibilityService() {
                     liveSegmentInFlight = false
                     liveStroke = null
                 }
+                // Confirmed on-device: the system cancels an in-progress
+                // continueStroke chain intermittently under load, with no
+                // native way to resume the SAME stroke — without this, the
+                // operator's drag simply stops responding (touchMove returns
+                // false while !liveActive) until the next mouse-up starts a
+                // fresh gesture. If the operator is still mid-drag (!finishing)
+                // and we haven't just been cancelled repeatedly, re-press at
+                // the last target so the drag keeps tracking instead of
+                // freezing — a few restarts in a row means this device can't
+                // sustain it at all, so stop trying rather than loop forever.
+                if (finishing) {
+                    Log.w(TAG, "live touch: continuation cancelled by the system")
+                    return
+                }
+                liveCancelStreak++
+                if (liveCancelStreak > 5) {
+                    Log.w(TAG, "live touch: cancelled repeatedly, giving up on this drag")
+                    return
+                }
+                Log.w(TAG, "live touch: continuation cancelled by the system — restarting at last target")
+                startLiveTouchAtPx(toX, toY)
             }
         }
-        try {
+        val accepted = try {
             dispatchGesture(gesture, callback, null)
         } catch (e: Exception) {
+            Log.w(TAG, "live touch: continuation dispatchGesture threw", e)
+            false
+        }
+        if (!accepted) {
+            Log.w(TAG, "live touch: continuation dispatchGesture rejected")
             synchronized(liveTouchLock) {
                 liveActive = false
                 liveSegmentInFlight = false

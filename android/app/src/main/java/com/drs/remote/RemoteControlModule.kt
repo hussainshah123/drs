@@ -59,7 +59,28 @@ class RemoteControlModule(private val reactCtx: ReactApplicationContext) :
 
     @ReactMethod
     fun openAccessibilitySettings(promise: Promise) {
+        // Android never lets an app — even a Device Owner — flip this toggle
+        // itself; it's deliberately the one consent step that always needs an
+        // explicit human tap, even stricter than the screen-capture prompt.
+        // The best we can do is land the person straight on this app's own
+        // toggle (API 30+) instead of the full accessibility list they'd
+        // otherwise have to scroll through and find DRS in themselves.
         try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val detail = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+                detail.putExtra(
+                    Intent.EXTRA_COMPONENT_NAME,
+                    android.content.ComponentName(reactCtx, DrsAccessibilityService::class.java).flattenToString(),
+                )
+                detail.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    reactCtx.startActivity(detail)
+                    promise.resolve(null)
+                    return
+                } catch (e: Exception) {
+                    Log.w("DrsRemoteControl", "accessibility details deep link failed, falling back to the list: ${e.message}")
+                }
+            }
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             reactCtx.startActivity(intent)
@@ -192,6 +213,20 @@ class RemoteControlModule(private val reactCtx: ReactApplicationContext) :
     @ReactMethod
     fun globalAction(action: String, promise: Promise) {
         promise.resolve(service()?.globalAction(action) ?: false)
+    }
+
+    /**
+     * Arms a short window to auto-tap Android's own screen-capture system
+     * dialog (see DrsAccessibilityService.armCaptureConsentAutoAccept). Call
+     * right before mediaDevices.getDisplayMedia(); resolves false only if the
+     * accessibility service isn't running (capture then falls back to needing
+     * a manual tap, as before).
+     */
+    @ReactMethod
+    fun armCaptureConsentAutoAccept(promise: Promise) {
+        val s = service()
+        s?.armCaptureConsentAutoAccept()
+        promise.resolve(s != null)
     }
 
     @ReactMethod

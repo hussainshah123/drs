@@ -636,6 +636,15 @@ export class AgentController {
       if (!this.screen.active) {
         await DeviceManagement.launchAgentActivity();
         await new Promise<void>(resolve => setTimeout(() => resolve(), 800));
+        // The system's own screen-capture prompt (MediaProjectionManager) is
+        // about to appear — Android requires it every session on 14+, and it
+        // cannot be skipped by app code. In managed/unattended mode there is
+        // no one to tap it, so the accessibility service taps it instead;
+        // this is the same "fully managed" intent autoShareScreen already
+        // expresses for this app's own consent step, extended to the OS's.
+        if (this.config.autoShareScreen) {
+          await RemoteControl.armCaptureConsentAutoAccept();
+        }
       }
       log.info('ctrl', 'acquiring screen capture for the session');
       const stream = await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale);
@@ -742,6 +751,12 @@ export class AgentController {
 
   /** Applies the in-session physical-input lock only for an authorized controller. */
   private onSessionControl(pid: number, control: SessionMsg) {
+    if (control.request_keyframe) {
+      // Any verified, connected participant may ask for this — it only
+      // refreshes their own decoder, not a control action requiring
+      // Cap.CONTROL_INPUT like the rest of this handler.
+      void this.peers.get(pid)?.requestKeyframe();
+    }
     if (!can(this.perms.get(pid) || 0, Cap.CONTROL_INPUT)) {
       return;
     }

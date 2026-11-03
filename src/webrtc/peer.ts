@@ -74,17 +74,29 @@ export class Peer {
   private screenTrack: MediaStreamTrack | null = null;
   private screenPaused = false;
   private adaptiveTimer: ReturnType<typeof setInterval> | null = null;
-  // Starts at 1, not 0: a brief window at full (configured) resolution before
-  // the first correction is exactly what reads as "starts smooth, then lags"
-  // — begin with one step of safety margin already applied and only relax it
-  // once the stream has proven itself stable.
+  // Starts at 1 (one step of safety margin), not 0: a brief window at full
+  // configured resolution before the first correction is exactly what reads
+  // as "starts smooth, then lags". selectVideoCodec() resets this to 0 when
+  // hardware H.264 is selected for this device — that margin exists because
+  // software VP8 can overload a phone's CPU at full resolution, which doesn't
+  // apply to hardware encoding.
   private adaptiveScaleIdx = 1;
   private adaptiveHealthyStreak = 0;
+  // The maxBitrate ceiling computed for adaptiveScaleIdx 0 (full configured
+  // resolution) — applyAdaptiveScale scales this down by the same area
+  // factor as scaleResolutionDownBy, so a step-down actually asks the
+  // network for fewer bits, not just fewer pixels at the old bitrate ceiling
+  // (which barely helped a genuinely bandwidth-constrained link).
+  private baseBitrateTarget = 0;
   // Geometric ladder of additional encoded-resolution downscale, stacked on
   // top of the capture-time resolutionScale: each step is applied via
   // RTCRtpEncodingParameters.scaleResolutionDownBy (live, no capture restart).
-  // ~1.78x area reduction per step; floor is 1/9 area (3.0), still usable.
-  private static readonly ADAPTIVE_SCALE_STEPS = [1, 1.33, 1.78, 2.37, 3];
+  // ~1.78x area reduction per step; floor is ~1/5.6 area (2.37) — the old 3.0
+  // floor looked badly blocky on the viewer for a hit that's often transient
+  // (e.g. the viewer's own UI thread being busy, reported here as jitter/RTT)
+  // rather than a real sustained cpu/bandwidth limit, so it's no longer worth
+  // paying for.
+  private static readonly ADAPTIVE_SCALE_STEPS = [1, 1.33, 1.78, 2.37];
   private static readonly ADAPTIVE_INTERVAL_MS = 2500;
 
   constructor(
@@ -376,9 +388,8 @@ export class Peer {
         // hardware), scaled by frame rate and by area (scale²), clamped to a
         // firm ceiling regardless of inputs.
         const target = 4_000_000 * (fps / 30) * scale * scale;
-        params.encodings[0].maxBitrate = Math.round(
-          Math.min(6_000_000, Math.max(1_000_000, target)),
-        );
+        this.baseBitrateTarget = Math.round(Math.min(6_000_000, Math.max(1_000_000, target)));
+        params.encodings[0].maxBitrate = this.baseBitrateTarget;
       }
       await sender.setParameters(params);
       log.info(
@@ -433,18 +444,27 @@ export class Peer {
       const stats = await this.pc.getStats();
       let reason: string | undefined;
       let fractionLost: number | undefined;
+      let roundTripTime: number | undefined;
+      let jitter: number | undefined;
       let framesEncoded: number | undefined;
       stats.forEach((s: any) => {
         if (s.type === 'outbound-rtp' && (s.kind === 'video' || s.mediaType === 'video')) {
           reason = s.qualityLimitationReason;
           framesEncoded = s.framesEncoded;
         }
-        // RTCP receiver reports surface here (sender-side view of loss the
+        // RTCP receiver reports surface here (sender-side view of what the
         // viewer is actually seeing) — a second, independent signal in case
         // qualityLimitationReason doesn't flag this particular kind of
         // trouble (e.g. a bursty Wi-Fi link reported as 'other' or 'none').
+        // roundTripTime/jitter matter on their own, not just fractionLost:
+        // a cross-network mobile-to-mobile link can stay essentially
+        // loss-free while still queueing badly (jitterBufferDelay climbing
+        // steadily on the viewer) — WebRTC's own bandwidth estimator doesn't
+        // always react to that quickly, so this loop does.
         if (s.type === 'remote-inbound-rtp' && (s.kind === 'video' || s.mediaType === 'video')) {
           fractionLost = s.fractionLost;
+          roundTripTime = s.roundTripTime;
+          jitter = s.jitter;
         }
       });
       // Runtime safety net for the per-device H.264 decision: the static
@@ -473,13 +493,17 @@ export class Peer {
       }
       const steps = Peer.ADAPTIVE_SCALE_STEPS;
       const lossy = typeof fractionLost === 'number' && fractionLost > 0.05;
-      if (reason === 'cpu' || reason === 'bandwidth' || lossy) {
+      const congested = (typeof roundTripTime === 'number' && roundTripTime > 0.3) ||
+        (typeof jitter === 'number' && jitter > 0.12);
+      if (reason === 'cpu' || reason === 'bandwidth' || lossy || congested) {
         this.adaptiveHealthyStreak = 0;
         if (this.adaptiveScaleIdx < steps.length - 1) {
           this.adaptiveScaleIdx++;
-          await this.applyAdaptiveScale(lossy && reason !== 'cpu' && reason !== 'bandwidth' ? 'packet loss' : reason!);
+          const why =
+            reason === 'cpu' || reason === 'bandwidth' ? reason : lossy ? 'packet loss' : 'high latency/jitter';
+          await this.applyAdaptiveScale(why);
         }
-      } else if (reason === 'none') {
+      } else if (reason === 'none' && !lossy && !congested) {
         this.adaptiveHealthyStreak++;
         // Require ~7.5s of clean encoding before trying a step back up, and
         // only one step at a time, so it can't oscillate against a step-down.
@@ -503,10 +527,16 @@ export class Peer {
       }
       const scale = Peer.ADAPTIVE_SCALE_STEPS[this.adaptiveScaleIdx];
       params.encodings[0].scaleResolutionDownBy = scale;
+      let bitrateNote = '';
+      if (this.baseBitrateTarget > 0) {
+        const bitrate = Math.max(300_000, Math.round(this.baseBitrateTarget / (scale * scale)));
+        params.encodings[0].maxBitrate = bitrate;
+        bitrateNote = ` maxBitrate=${bitrate}`;
+      }
       await sender.setParameters(params);
       log.info(
         'peer',
-        `adaptive quality: ${reason} → scaleResolutionDownBy=${scale} (step ${
+        `adaptive quality: ${reason} → scaleResolutionDownBy=${scale}${bitrateNote} (step ${
           this.adaptiveScaleIdx
         }/${Peer.ADAPTIVE_SCALE_STEPS.length - 1})`,
       );
@@ -532,6 +562,29 @@ export class Peer {
         this.participantId
       }`,
     );
+  }
+
+  /**
+   * Forces a fresh keyframe on request (InputEvent.control.request_keyframe).
+   * There's no standard WebRTC API to ask an encoder for one directly; a
+   * replaceTrack with the SAME live track — the same primitive
+   * setScreenPaused above already relies on — reliably prompts a new one in
+   * react-native-webrtc, without restarting capture or dropping the sender's
+   * current encoding params. Needed because an ICE blip's automatic RTCP
+   * PLI/FIR doesn't always arrive promptly enough: observed recovery times
+   * of 20-60s of a near-frozen picture after a real network interruption,
+   * even once the connection itself had already reconnected.
+   */
+  async requestKeyframe(): Promise<void> {
+    if (!this.screenSender?.replaceTrack || !this.screenTrack || this.screenPaused) {
+      return;
+    }
+    try {
+      await this.screenSender.replaceTrack(this.screenTrack);
+      log.info('peer', `keyframe requested for participant ${this.participantId}`);
+    } catch (e: any) {
+      log.warn('peer', `requestKeyframe failed: ${e?.message || e}`);
+    }
   }
 
   // Per-device hardware-H.264 decision, cached for the life of the process so
@@ -580,6 +633,16 @@ export class Peer {
       }
     }
     this.usingH264 = preferH264;
+    // adaptiveScaleIdx used to drop straight to 0 (full configured
+    // resolution) here, reasoning that hardware H.264 has CPU headroom
+    // software VP8 doesn't. True, but CPU was never the bottleneck observed
+    // in real cross-network (mobile-to-mobile, separate Wi-Fi) testing —
+    // qualityLimitationReason was 'cpu' zero times across every session
+    // logged; the actual pattern every time was real network jitter/RTT
+    // (confirmed: large packetsLost bursts at each ICE disconnect) that
+    // forced the same 1-2 minute adaptive ramp-down regardless of codec.
+    // Starting one step down (same margin VP8 always used) means that
+    // ramp-down is usually unnecessary rather than inevitable.
     try {
       const caps = (RTCRtpReceiver as any).getCapabilities?.('video');
       if (!caps?.codecs || !vtx?.setCodecPreferences) {

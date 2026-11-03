@@ -341,6 +341,59 @@ class DeviceManagementModule(private val reactCtx: ReactApplicationContext) :
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Battery optimization exemption
+    //
+    // A foreground service survives backgrounding by itself, but Android's
+    // Doze/App Standby battery optimizer can still throttle or kill network
+    // connections (and, on some OEM skins — Xiaomi/MIUI, Oppo, Vivo, Huawei,
+    // Samsung — the whole background process) after extended idle time,
+    // regardless of the foreground service. Being on the OS's battery
+    // optimization exemption list is the standard, documented defense for an
+    // app that genuinely needs to stay connected in the background (this is
+    // the same mechanism messaging and VPN apps use). It still needs ONE
+    // explicit user tap on the system dialog below — there is no public API,
+    // even for a Device Owner, to grant this silently. OEM-specific
+    // "autostart"/"no restrictions" battery managers are a separate, further
+    // step this cannot reach — that needs the IT admin to allow this app in
+    // the device's own battery manager app, which has no common Android API.
+    // -------------------------------------------------------------------------
+
+    @ReactMethod
+    fun isIgnoringBatteryOptimizations(promise: Promise) {
+        try {
+            val pm = reactCtx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            promise.resolve(pm.isIgnoringBatteryOptimizations(reactCtx.packageName))
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
+
+    /**
+     * Shows the system "allow this app to ignore battery optimizations?"
+     * dialog if not already exempt. Resolves true only if already exempt
+     * (the dialog itself is fire-and-forget; call isIgnoringBatteryOptimizations
+     * again after the app resumes to see what the user chose).
+     */
+    @ReactMethod
+    fun requestIgnoreBatteryOptimizations(promise: Promise) {
+        try {
+            val pm = reactCtx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (pm.isIgnoringBatteryOptimizations(reactCtx.packageName)) {
+                promise.resolve(true)
+                return
+            }
+            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = android.net.Uri.parse("package:${reactCtx.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactCtx.startActivity(intent)
+            promise.resolve(false)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
+
     /** Enables/disables the camera for the whole device (device admin/owner). */
     @ReactMethod
     fun setCameraDisabled(disabled: Boolean, promise: Promise) {
