@@ -195,6 +195,12 @@ export class AgentController {
   // while the first MediaProjection prompt was still on screen, which could
   // show as the capture prompt appearing twice in a row for one connect.
   private connectingPids = new Set<number>();
+  // Participants holding one screen-capture reference. closePeer() releases
+  // only for these: a viewer that left before its capture was acquired (a
+  // Live Screens preview opened and closed quickly) used to release a
+  // reference it never took — dropping the held one — and then the late
+  // acquire left the capture running with no viewer.
+  private capturePids = new Set<number>();
   private state: ControllerState;
   private listeners = new Set<(s: ControllerState) => void>();
   private api: Api;
@@ -647,7 +653,19 @@ export class AgentController {
         }
       }
       log.info('ctrl', 'acquiring screen capture for the session');
-      const stream = await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale);
+      if (this.peers.get(pid) !== peer) {
+        log.info('ctrl', `participant ${pid} left before screen capture started`);
+        return;
+      }
+      // acquire() takes its reference synchronously, so record it before awaiting:
+      // a closePeer() during the await then releases exactly this reference.
+      const acquiring = this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale);
+      this.capturePids.add(pid);
+      const stream = await acquiring;
+      if (this.peers.get(pid) !== peer) {
+        log.info('ctrl', `participant ${pid} left while screen capture was starting`);
+        return;
+      }
       // Holds an extra reference so capture survives between this peer
       // disconnecting and the next one connecting, instead of releasing fully
       // the moment the last viewer leaves. This can skip the re-prompt on
@@ -1039,7 +1057,7 @@ export class AgentController {
    * it; the echo is reconciled when history next loads. Throws if the socket is
    * not connected so the UI can surface it.
    */
-  async sendToOperator(text: string): Promise<void> {
+  async sendToOperator(text: string, to?: string): Promise<void> {
     const body = text.trim();
     if (!body) {
       return;
@@ -1055,6 +1073,7 @@ export class AgentController {
       sender: 'You',
       text: body,
       receivedAt: Date.now(),
+      to,
     });
   }
 
@@ -1201,8 +1220,10 @@ export class AgentController {
     if (peer) {
       peer.close();
       this.peers.delete(pid);
-      this.screen.release();
       this.setStreamingActive(this.peers.size > 0);
+    }
+    if (this.capturePids.delete(pid)) {
+      this.screen.release();
     }
     this.connected.delete(pid);
     forgetInput(pid);
@@ -1220,6 +1241,7 @@ export class AgentController {
       peer.close();
     }
     this.peers.clear();
+    this.capturePids.clear(); // the loop below releases every reference
     this.connected.clear();
     this.perms.clear();
     this.names.clear();

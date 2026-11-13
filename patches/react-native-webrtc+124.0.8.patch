@@ -136,6 +136,30 @@ index 554739d..4dfff4d 100644
                      } catch (Exception ex) {
                          // We ignore exceptions here. The video capturer runs on its own
                          // thread and we cannot synchronize with it.
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
+index d5a9fb4..958f88b 100644
+--- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
+@@ -976,7 +976,8 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
+     public void peerConnectionCreateOffer(int id, ReadableMap options, Promise promise) {
+         ThreadUtils.runOnExecutor(() -> {
+             PeerConnectionObserver pco = mPeerConnectionObservers.get(id);
+-            PeerConnection peerConnection = pco.getPeerConnection();
++            // pco is null once the PeerConnection was closed (a viewer that left mid-negotiation).
++            PeerConnection peerConnection = pco == null ? null : pco.getPeerConnection();
+ 
+             if (peerConnection == null) {
+                 Log.d(TAG, "peerConnectionCreateOffer() peerConnection is null");
+@@ -1138,7 +1139,8 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
+     public void peerConnectionSetRemoteDescription(int id, ReadableMap desc, Promise promise) {
+         ThreadUtils.runOnExecutor(() -> {
+             PeerConnectionObserver pco = mPeerConnectionObservers.get(id);
+-            PeerConnection peerConnection = pco.getPeerConnection();
++            // pco is null once the PeerConnection was closed (a viewer that left mid-negotiation).
++            PeerConnection peerConnection = pco == null ? null : pco.getPeerConnection();
+ 
+             if (peerConnection == null) {
+                 Log.d(TAG, "peerConnectionSetRemoteDescription() peerConnection is null");
 diff --git a/node_modules/react-native-webrtc/src/getDisplayMedia.ts b/node_modules/react-native-webrtc/src/getDisplayMedia.ts
 index 9ba45e0..fa9464b 100644
 --- a/node_modules/react-native-webrtc/src/getDisplayMedia.ts

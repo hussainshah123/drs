@@ -89,7 +89,7 @@ function Row({notif, onPress}: {notif: Notif; onPress: () => void}) {
 }
 
 const styles = StyleSheet.create({
-  wrap: {flex: 1, backgroundColor: C.bg},
+  wrap: {flex: 1},
   markAll: {color: C.orange, fontSize: 14, fontWeight: '800'},
   listPad: {paddingVertical: 6},
   emptyPad: {flexGrow: 1},
@@ -105,7 +105,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconUnread: {backgroundColor: C.orangeSoft, borderColor: C.orangeLine},
+  iconUnread: {
+    backgroundColor: C.orangeSoft,
+    borderColor: C.orangeLine,
+    shadowColor: C.orange,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: {width: 0, height: 2},
+    elevation: 3,
+  },
   body: {flex: 1, marginLeft: 14},
   top: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
   title: {color: C.textDim, fontSize: 15.5, fontWeight: '700', flex: 1, marginRight: 10},
@@ -124,6 +132,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
+    shadowColor: C.orange,
+    shadowOpacity: 0.3,
+    shadowRadius: 14,
+    shadowOffset: {width: 0, height: 4},
+    elevation: 4,
   },
   emptyTitle: {color: C.text, fontSize: 18, fontWeight: '800', marginBottom: 6},
   emptyText: {color: C.textDim, fontSize: 14, textAlign: 'center'},

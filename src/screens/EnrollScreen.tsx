@@ -72,7 +72,7 @@ export function EnrollScreen({
         <P dim>Enroll this device so it can be securely viewed and controlled from the Command Center.</P>
       </View>
 
-      <Card>
+      {/* <Card>
         <Label>Backend</Label>
         <Field
           label="API BASE URL"
@@ -81,7 +81,7 @@ export function EnrollScreen({
           placeholder="http://10.0.2.2:8080"
         />
         <Text style={styles.hint}>Use 10.0.2.2 for the host machine from an Android emulator.</Text>
-      </Card>
+      </Card> */}
 
       <Card>
         <Label>Enrollment token</Label>

@@ -35,7 +35,67 @@ export type InboxMessage = {
   outgoing?: boolean;
   /** An outgoing echo not yet confirmed by the server (temporary local id). */
   pending?: boolean;
+  /**
+   * Outgoing only: the admin whose conversation this reply was written in.
+   * Local bookkeeping — the server delivers a device's replies to all of its
+   * operators, it has no per-admin recipient.
+   */
+  to?: string;
 };
+
+/** One admin this device has a conversation with (the Messages list). */
+export type Conversation = {
+  admin: string;
+  messages: InboxMessage[];
+  last: InboxMessage;
+  unread: number;
+};
+
+/**
+ * conversationKey: which admin a message belongs to. Incoming → its sender.
+ * A reply → the admin it was written to, or (history rows carry no recipient)
+ * the admin who wrote last before it — the one it was answering.
+ */
+function attribute(messages: InboxMessage[]): Map<InboxMessage, string> {
+  const out = new Map<InboxMessage, string>();
+  let lastAdmin = '';
+  for (const m of messages) {
+    if (m.outgoing) {
+      out.set(m, m.to || lastAdmin || 'Support');
+    } else {
+      lastAdmin = m.sender || 'Support';
+      out.set(m, lastAdmin);
+    }
+  }
+  return out;
+}
+
+/** Conversations grouped by admin, most recent first; each one's messages oldest first. */
+export function getConversations(): Conversation[] {
+  const all = getInbox();
+  const owner = attribute(all);
+  const by = new Map<string, InboxMessage[]>();
+  for (const m of all) {
+    const k = owner.get(m)!;
+    const list = by.get(k);
+    if (list) {
+      list.push(m);
+    } else {
+      by.set(k, [m]);
+    }
+  }
+  return Array.from(by, ([admin, messages]) => ({
+    admin,
+    messages,
+    last: messages[messages.length - 1],
+    unread: messages.reduce((n, m) => n + (m.status === 'delivered' && !m.outgoing ? 1 : 0), 0),
+  })).sort((a, b) => b.last.receivedAt - a.last.receivedAt);
+}
+
+/** One admin's conversation, oldest first. */
+export function getConversation(admin: string): InboxMessage[] {
+  return getConversations().find(c => c.admin === admin)?.messages || [];
+}
 
 const STORAGE_KEY = 'drs.inbox.v1';
 const MAX_KEPT = 500;

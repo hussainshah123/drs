@@ -124,20 +124,16 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
             text={meta.label.toUpperCase()}
             color={meta.color}
             soft={meta.soft || undefined}
+            pulse={state.signal === 'registered'}
           />
         </Row>
 
         {/* Connection hero */}
-        <Card style={[styles.hero, { borderColor: meta.color + '44' }]}>
-          <View style={[styles.heroGlow, { backgroundColor: meta.color }]} />
+        <Card glow translucent style={[styles.hero, { borderColor: meta.color + '44' }]}>
           <Text style={styles.heroStatus}>{meta.label}</Text>
           <Text style={styles.heroHint}>{meta.hint}</Text>
           <View style={styles.heroMetaRow}>
             <HeroMeta label="DEVICE" value={short(state.deviceId)} />
-            <HeroMeta
-              label="VIEWERS"
-              value={String(state.participants.filter(p => p.connected).length)}
-            />
             <HeroMeta
               label="SCREEN"
               value={
@@ -153,17 +149,20 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
         </Card>
 
         {/* Readiness */}
-        <Card>
+        <Card translucent>
           <Label>Readiness</Label>
           <StatusRow
+            icon="wifi"
             label="Gateway connection"
             ok={state.signal === 'registered'}
             warn={
               state.signal === 'connecting' || state.signal === 'reconnecting'
             }
             value={meta.label}
+            pulse
           />
           <StatusRow
+            icon="monitor"
             label="Screen sharing"
             ok={state.screenActive && !state.screenPaused}
             warn={state.screenPaused}
@@ -174,20 +173,24 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
                 ? 'active'
                 : 'ready'
             }
+            pulse
           />
           <StatusRow
+            icon="bell"
             label="Notifications"
             ok={!!perms?.notifications}
             value={perms?.notifications ? 'granted' : 'off'}
           />
           {perms?.remoteControlSupported ? (
             <StatusRow
+              icon="pointer"
               label="Remote control"
               ok={!!perms?.remoteControl}
               value={perms?.remoteControl ? 'enabled' : 'disabled'}
             />
           ) : (
             <StatusRow
+              icon="pointer"
               label="Remote control"
               ok={false}
               warn
@@ -219,6 +222,7 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
           {Platform.OS === 'android' && DeviceManagement.available() && (
             <>
               <StatusRow
+                icon="shield"
                 label="Device management"
                 ok={state.deviceOwner}
                 warn={state.deviceAdminActive && !state.deviceOwner}
@@ -267,74 +271,30 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
                 ? 'Start screen sharing and confirm Start Broadcast in the iOS picker. The active broadcast is reused for later operator sessions, but iOS requires you to start it again if it ends; it cannot be silently restarted.'
                 : 'Each new operator connection may show the Android capture prompt — on Android 14+ this is a one-tap system requirement every time, by Android\'s own design, not something this app can skip. On older Android versions it can sometimes be reused across sessions if you pre-approve it now with the button below.'}
             </P>
-            <Button
-              title={
-                testing
-                  ? 'Requesting…'
-                  : Platform.OS === 'android' && state.screenActive
-                  ? state.screenPaused
-                    ? 'Resume screen sharing'
-                    : 'Pause screen sharing'
-                  : state.sharing
-                  ? 'Stop screen sharing'
-                  : 'Start screen sharing'
-              }
-              kind={
-                Platform.OS === 'android' && state.screenActive
-                  ? state.screenPaused
-                    ? 'primary'
-                    : 'soft'
-                  : state.sharing
-                  ? 'danger'
-                  : 'primary'
-              }
-              onPress={async () => {
-                if (Platform.OS === 'android' && state.screenActive) {
-                  try {
-                    if (state.screenPaused) {
-                      await controller.resumeSharing();
-                    } else {
-                      await controller.pauseSharing();
-                    }
-                  } catch (e: any) {
-                    Alert.alert(
-                      state.screenPaused
-                        ? 'Could not resume screen sharing'
-                        : 'Could not pause screen sharing',
-                      e?.message || String(e),
-                    );
-                  }
-                  return;
-                }
-                if (state.sharing) {
-                  controller.stopSharing();
-                  return;
-                }
-                setTesting(true);
-                const err = await controller.startSharing();
-                setTesting(false);
-                if (err) {
-                  Alert.alert('Screen sharing failed', err);
-                }
-              }}
-            />
-            {Platform.OS === 'android' && state.screenActive && (
+            {/* While Android capture is live there's no button here: the Pause and
+                End screen capture controls were removed on request. A new
+                operator session still resumes a capture paused earlier. */}
+            {!(Platform.OS === 'android' && state.screenActive) && (
               <Button
-                title="End screen capture"
-                kind="danger"
-                onPress={() => {
-                  Alert.alert(
-                    'End screen capture?',
-                    'This stops Android screen capture and disconnects current viewers. Android will ask for screen-sharing permission again next time.',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'End capture',
-                        style: 'destructive',
-                        onPress: () => controller.endScreenCapture(),
-                      },
-                    ],
-                  );
+                title={
+                  testing
+                    ? 'Requesting…'
+                    : state.sharing
+                    ? 'Stop screen sharing'
+                    : 'Start screen sharing'
+                }
+                kind={state.sharing ? 'danger' : 'primary'}
+                onPress={async () => {
+                  if (state.sharing) {
+                    controller.stopSharing();
+                    return;
+                  }
+                  setTesting(true);
+                  const err = await controller.startSharing();
+                  setTesting(false);
+                  if (err) {
+                    Alert.alert('Screen sharing failed', err);
+                  }
                 }}
               />
             )}
@@ -342,7 +302,7 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
         </Card>
 
         {/* Participants */}
-        <Card>
+        <Card translucent>
           <Row style={{ marginBottom: state.participants.length ? 12 : 0 }}>
             <Label>Connected operators</Label>
           </Row>
@@ -368,6 +328,7 @@ export function StatusScreen({ controller }: { controller: AgentController }) {
                   text={p.connected ? 'LIVE' : 'WAIT'}
                   color={p.connected ? T.good : T.warn}
                   soft={p.connected ? T.goodSoft : T.warnSoft}
+                  pulse={p.connected}
                 />
               </Row>
             ))
@@ -487,7 +448,7 @@ const time = (ts: number) => {
 const pad = (n: number) => String(n).padStart(2, '0');
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: T.bg },
+  wrap: { flex: 1 },
   scroll: { flex: 1 },
   content: { padding: T.space, paddingBottom: 40 },
   brand: {
@@ -498,15 +459,6 @@ const styles = StyleSheet.create({
   },
   brandSub: { color: T.textFaint, fontSize: 12, fontWeight: '600' },
   hero: { padding: 22, overflow: 'hidden' },
-  heroGlow: {
-    position: 'absolute',
-    top: -60,
-    right: -40,
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    opacity: 0.12,
-  },
   heroStatus: {
     color: T.text,
     fontSize: 30,

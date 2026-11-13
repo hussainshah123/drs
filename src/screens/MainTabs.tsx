@@ -4,12 +4,13 @@
  * (others unmount, so their back handlers / timers don't run in the background).
  */
 import React, {useEffect, useReducer, useState} from 'react';
-import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Dimensions, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {T} from '../ui/theme';
 import {Icon, type IconName} from '../ui/Icon';
+import {ConnectionGlobe} from '../ui/ConnectionGlobe';
 import {StatusScreen} from './StatusScreen';
 import {PermissionsScreen} from './PermissionsScreen';
-import {InboxScreen} from '../messages/InboxScreen';
+import {MessagesTab} from '../messages/MessagesTab';
 import {MessageOverlay} from '../messages/MessageOverlay';
 import {loadInbox, subscribeInbox, unreadInboxCount} from '../messages/store';
 import {NotificationsScreen} from '../notifications/NotificationsScreen';
@@ -59,7 +60,7 @@ export function MainTabs({
       screen = <StatusScreen controller={controller} />;
       break;
     case 'messages':
-      screen = <InboxScreen controller={controller} />;
+      screen = <MessagesTab controller={controller} />;
       break;
     case 'alerts':
       screen = <NotificationsScreen />;
@@ -75,8 +76,11 @@ export function MainTabs({
       break;
   }
 
+  const {width: screenW, height: screenH} = Dimensions.get('window');
+
   return (
     <View style={styles.wrap}>
+      <ConnectionGlobe width={screenW} height={screenH} />
       <View style={styles.body}>{screen}</View>
       <View style={styles.tabBar}>
         {TABS.map(t => {
@@ -118,6 +122,11 @@ const styles = StyleSheet.create({
     borderTopColor: T.borderSoft,
     paddingTop: 8,
     paddingBottom: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: {width: 0, height: -3},
+    elevation: 8,
   },
   tab: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   iconWrap: {

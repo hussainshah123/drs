@@ -26,7 +26,8 @@ export type IconName =
   | 'pointer'
   | 'settings'
   | 'logout'
-  | 'inbox';
+  | 'inbox'
+  | 'wifi';
 
 export function Icon({
   name,
@@ -189,6 +190,15 @@ function render(name: IconName, p: P): React.ReactNode {
         <>
           <Polyline {...p} points="22 12 16 12 14 15 10 15 8 12 2 12" />
           <Path {...p} d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+        </>
+      );
+    case 'wifi':
+      return (
+        <>
+          <Path {...p} d="M5 12.55a11 11 0 0 1 14.08 0" />
+          <Path {...p} d="M1.42 9a16 16 0 0 1 21.16 0" />
+          <Path {...p} d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+          <Line {...p} x1="12" y1="20" x2="12.01" y2="20" />
         </>
       );
   }

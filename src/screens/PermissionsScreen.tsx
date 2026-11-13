@@ -104,34 +104,17 @@ export function PermissionsScreen({
     desc:
       Platform.OS === 'ios'
         ? 'Start a ReplayKit broadcast so an operator can view this screen.'
-        : 'Pause video while keeping Android capture alive where possible. On Android 14+, the system requires a fresh one-tap consent for every new session regardless — this is an OS policy, not something this app controls.',
+        : 'Lets an operator view this screen. On Android 14+, the system asks for a one-tap consent for every new session — this is an OS policy, not something this app controls.',
     granted: state.sharing || state.screenActive,
     statusText: state.screenPaused
       ? 'Paused (capture active)'
       : state.screenActive
       ? 'Active'
       : 'Ready',
+    // No Pause button while Android capture is live (removed on request).
     action:
       Platform.OS === 'android' && state.screenActive
-        ? {
-            label: state.screenPaused ? 'Resume' : 'Pause',
-            onPress: async () => {
-              try {
-                if (state.screenPaused) {
-                  await controller.resumeSharing();
-                } else {
-                  await controller.pauseSharing();
-                }
-              } catch (e: any) {
-                Alert.alert(
-                  state.screenPaused
-                    ? 'Could not resume screen sharing'
-                    : 'Could not pause screen sharing',
-                  e?.message || String(e),
-                );
-              }
-            },
-          }
+        ? undefined
         : state.sharing
         ? { label: 'Stop', onPress: () => controller.stopSharing() }
         : {
@@ -287,8 +270,8 @@ function PermRow({ spec, border }: { spec: RowSpec; border: boolean }) {
   const color = spec.granted ? T.good : spec.warn ? T.warn : T.textFaint;
   return (
     <View style={[styles.permRow, border && styles.permBorder]}>
-      <View style={styles.permIcon}>
-        <Icon name={spec.icon} size={20} color={T.accent} />
+      <View style={[styles.permIcon, spec.granted && styles.permIconGranted]}>
+        <Icon name={spec.icon} size={20} color={spec.granted ? T.good : T.accent} />
       </View>
       <View style={styles.permBody}>
         <Text style={styles.permTitle}>{spec.title}</Text>
@@ -316,7 +299,7 @@ function PermRow({ spec, border }: { spec: RowSpec; border: boolean }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: T.bg },
+  wrap: { flex: 1 },
   content: { padding: 16 },
   sectionLabel: {
     color: T.textFaint,
@@ -333,6 +316,11 @@ const styles = StyleSheet.create({
     borderColor: T.border,
     paddingHorizontal: 14,
     marginBottom: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: {width: 0, height: 4},
+    elevation: 3,
   },
   permRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14 },
   permBorder: { borderTopWidth: 1, borderTopColor: T.borderSoft },
@@ -347,6 +335,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 13,
   },
+  permIconGranted: {
+    backgroundColor: T.goodSoft,
+    borderColor: 'rgba(50,213,131,0.4)',
+    shadowColor: T.good,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    shadowOffset: {width: 0, height: 2},
+    elevation: 3,
+  },
   permBody: { flex: 1, marginRight: 10 },
   permTitle: { color: T.text, fontSize: 15.5, fontWeight: '800' },
   permDesc: { color: T.textDim, fontSize: 12.5, marginTop: 3, lineHeight: 17 },
@@ -358,6 +355,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 9,
+    shadowColor: T.accent,
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    shadowOffset: {width: 0, height: 3},
+    elevation: 4,
   },
   allowText: { color: '#1A0E00', fontSize: 13.5, fontWeight: '800' },
   okBadge: {

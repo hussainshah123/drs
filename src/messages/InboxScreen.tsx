@@ -24,10 +24,11 @@ import {
 import {C, avatarColor, clockTime, dayLabel} from '../ui/chatTheme';
 import {ChatAvatar, ChatHeader} from '../chat/ui';
 import {Icon} from '../ui/Icon';
+import {SELECTABLE_TEXT, copyMessage} from '../ui/copyText';
 import type {AgentController} from '../agent/controller';
 import {
+  getConversation,
   getHistoryState,
-  getInbox,
   isExpired,
   loadInbox,
   needsAction,
@@ -54,7 +55,16 @@ const STATUS_LABEL: Record<InboxMessage['status'], string> = {
   dismissed: 'Dismissed',
 };
 
-export function InboxScreen({controller}: {controller: AgentController}) {
+/** One admin's conversation with this device (opened from the Messages list). */
+export function InboxScreen({
+  controller,
+  admin,
+  onBack,
+}: {
+  controller: AgentController;
+  admin: string;
+  onBack: () => void;
+}) {
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const keyboardOffset = useRef(new Animated.Value(0)).current;
 
@@ -97,7 +107,7 @@ export function InboxScreen({controller}: {controller: AgentController}) {
     };
   }, [keyboardOffset]);
 
-  const messages = getInbox();
+  const messages = getConversation(admin);
   const history = getHistoryState();
 
   // Everything on screen has been seen: report incoming messages read. Outgoing
@@ -164,16 +174,17 @@ export function InboxScreen({controller}: {controller: AgentController}) {
           </View>
         }
       />
-      <Composer controller={controller} />
+      <Composer controller={controller} admin={admin} />
     </>
   );
 
   return (
     <View style={styles.wrap}>
       <ChatHeader
-        title="Messages"
-        subtitle="From your IT support team"
-        left={<ChatAvatar name="Support" size={40} group />}
+        title={admin}
+        subtitle="IT support"
+        onBack={onBack}
+        left={<ChatAvatar name={admin} size={40} seed={admin} />}
       />
       {Platform.OS === 'ios' ? (
         <KeyboardAvoidingView style={styles.body} behavior="padding">
@@ -190,7 +201,7 @@ export function InboxScreen({controller}: {controller: AgentController}) {
 }
 
 /** Composer — send a chat message from this device to the operator. */
-function Composer({controller}: {controller: AgentController}) {
+function Composer({controller, admin}: {controller: AgentController; admin: string}) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -201,7 +212,7 @@ function Composer({controller}: {controller: AgentController}) {
     }
     setSending(true);
     try {
-      await controller.sendToOperator(body);
+      await controller.sendToOperator(body, admin);
       setText('');
     } catch {
       // Keep the text so the person can retry; a failed send is transient.
@@ -217,7 +228,7 @@ function Composer({controller}: {controller: AgentController}) {
         style={styles.input}
         value={text}
         onChangeText={setText}
-        placeholder="Message your IT team…"
+        placeholder={`Message ${admin}…`}
         placeholderTextColor={C.textFaint}
         multiline
         editable={!sending}
@@ -314,17 +325,20 @@ function Bubble({
     // This device's own reply: right-aligned, no avatar or sender line.
     return (
       <View style={[styles.bubbleRow, styles.bubbleRowOut, {marginBottom: tail ? 10 : 2}]}>
-        <View
+        <TouchableOpacity
+          activeOpacity={0.75}
+          delayLongPress={350}
+          onLongPress={() => void copyMessage(msg.text)}
           style={[
             styles.bubble,
             styles.bubbleOut,
             tail ? styles.tailOut : styles.round,
           ]}>
-          <Text style={styles.bubbleTextOut}>{msg.text}</Text>
+          <Text style={styles.bubbleTextOut} selectable={SELECTABLE_TEXT}>{msg.text}</Text>
           <View style={styles.metaRow}>
             <Text style={styles.timeOut}>{clockTime(msg.receivedAt)}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -333,7 +347,11 @@ function Bubble({
       <View style={styles.bubbleAvatar}>
         {tail ? <ChatAvatar name={msg.sender} size={28} seed={msg.sender} /> : null}
       </View>
-      <View style={[styles.bubble, tail ? styles.tail : styles.round, msg.kind !== 'chat' && styles.notice]}>
+      <TouchableOpacity
+        activeOpacity={0.75}
+        delayLongPress={350}
+        onLongPress={() => void copyMessage(msg.text)}
+        style={[styles.bubble, tail ? styles.tail : styles.round, msg.kind !== 'chat' && styles.notice]}>
         {showSender || kindLabel ? (
           <View style={styles.bubbleTop}>
             {showSender ? (
@@ -348,7 +366,7 @@ function Bubble({
             ) : null}
           </View>
         ) : null}
-        <Text style={styles.bubbleText}>{msg.text}</Text>
+        <Text style={styles.bubbleText} selectable={SELECTABLE_TEXT}>{msg.text}</Text>
         {needsAction(msg) ? (
           <View style={styles.actions}>
             <TouchableOpacity activeOpacity={0.8} style={styles.ackBtn} onPress={onAcknowledge}>
@@ -364,13 +382,13 @@ function Bubble({
           {statusLabel ? <Text style={styles.status}>{statusLabel}</Text> : null}
           <Text style={styles.time}>{clockTime(msg.receivedAt)}</Text>
         </View>
-      </View>
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {flex: 1, backgroundColor: C.bg},
+  wrap: {flex: 1},
   body: {flex: 1},
   listPad: {paddingHorizontal: 12, paddingTop: 10},
   emptyPad: {flexGrow: 1},

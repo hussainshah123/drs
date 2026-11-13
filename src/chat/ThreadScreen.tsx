@@ -13,6 +13,7 @@ import {
 import {C, avatarColor, clockTime, dayLabel} from '../ui/chatTheme';
 import {ChatAvatar, ChatHeader, IconButton} from './ui';
 import {Icon} from '../ui/Icon';
+import {SELECTABLE_TEXT, copyMessage} from '../ui/copyText';
 import {
   ME_ID,
   conversationMeta,
@@ -173,7 +174,10 @@ function Bubble({item, isGroup}: {item: Extract<Item, {type: 'msg'}>; isGroup: b
           {tail ? <ChatAvatar name={sender?.name || '?'} size={28} seed={msg.senderId} /> : null}
         </View>
       ) : null}
-      <View
+      <TouchableOpacity
+        activeOpacity={0.75}
+        delayLongPress={350}
+        onLongPress={() => void copyMessage(msg.text)}
         style={[
           styles.bubble,
           mine ? styles.bubbleMine : styles.bubbleTheirs,
@@ -190,9 +194,11 @@ function Bubble({item, isGroup}: {item: Extract<Item, {type: 'msg'}>; isGroup: b
             {sender?.name || 'Unknown'}
           </Text>
         ) : null}
-        <Text style={[styles.bubbleText, mine ? styles.textMine : styles.textTheirs]}>{msg.text}</Text>
+        <Text style={[styles.bubbleText, mine ? styles.textMine : styles.textTheirs]} selectable={SELECTABLE_TEXT}>
+          {msg.text}
+        </Text>
         <Text style={[styles.time, mine ? styles.timeMine : styles.timeTheirs]}>{clockTime(msg.ts)}</Text>
-      </View>
+      </TouchableOpacity>
     </View>
   );
 }
