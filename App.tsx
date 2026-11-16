@@ -77,7 +77,28 @@ function App(): React.JSX.Element {
           log.info('mdm', `managed agent policy applied: ${JSON.stringify(r)}`);
         }
       });
-      const id = await loadIdentity();
+      // A transient read failure (most commonly: the Android Keystore key
+      // isn't accessible yet this early after boot, before the device's
+      // first unlock) must never be treated the same as "never enrolled" —
+      // that used to silently drop the saved identity and auto-re-enroll as
+      // a brand new device on every such hiccup, which is why the same
+      // physical device kept showing up in the portal under a different id
+      // each time. Retry with backoff before finally giving up.
+      let id: Identity | null = null;
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          id = await loadIdentity();
+          lastErr = undefined;
+          break;
+        } catch (e) {
+          lastErr = e;
+          await new Promise<void>(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+        }
+      }
+      if (lastErr) {
+        log.error('boot', `could not read saved identity after retries, treating as unenrolled: ${(lastErr as any)?.message || lastErr}`);
+      }
       setConfig(cfg);
       setIdentity(id);
       setRoute(id ? 'status' : 'enroll');

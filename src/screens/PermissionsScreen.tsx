@@ -51,21 +51,26 @@ export function PermissionsScreen({
   const [state, setState] = useState<ControllerState>(controller.getState());
   const [perms, setPerms] = useState<PermissionState | null>(null);
   const [batteryExempt, setBatteryExempt] = useState<boolean | null>(null);
+  const [overlayGranted, setOverlayGranted] = useState<boolean | null>(null);
 
   const refreshPerms = async () => setPerms(await getPermissionState());
   const refreshBattery = async () =>
     setBatteryExempt(await DeviceManagement.isIgnoringBatteryOptimizations());
+  const refreshOverlay = async () =>
+    setOverlayGranted(await DeviceManagement.hasOverlayPermission());
 
   useEffect(() => controller.subscribe(setState), [controller]);
   useEffect(() => {
     void refreshPerms();
     void refreshBattery();
+    void refreshOverlay();
     const sub = AppState.addEventListener('change', s => {
       if (s === 'active') {
         void controller.refreshAccessibility();
         void controller.refreshDeviceAdmin();
         void refreshPerms();
         void refreshBattery();
+        void refreshOverlay();
       }
     });
     return () => sub.remove();
@@ -168,7 +173,7 @@ export function PermissionsScreen({
       icon: 'shield',
       title: 'Stay connected in background',
       desc:
-        'Exempt this app from battery optimization so it keeps its connection open when backgrounded or idle. Some phone brands (Xiaomi, Oppo, Vivo, Huawei, Samsung) have their own separate battery manager — this does not reach that; ask your IT admin if the device still drops connection after enabling this.',
+        'Exempt this app from battery optimization so it keeps its connection open when backgrounded or idle. Some phone brands (Xiaomi, Oppo, Vivo, Huawei, Samsung, Transsion/Infinix) have their own separate battery manager — this does not reach that; use "App launch management" below too if the device still drops connection after enabling this.',
       granted: !!batteryExempt,
       statusText: batteryExempt === null ? 'Checking…' : batteryExempt ? 'Exempt' : 'Not exempt',
       action: batteryExempt
@@ -178,6 +183,37 @@ export function PermissionsScreen({
             onPress: async () => {
               await DeviceManagement.requestIgnoreBatteryOptimizations();
               await refreshBattery();
+            },
+          },
+    });
+    rows.push({
+      key: 'bg_activity',
+      icon: 'shield',
+      title: 'App launch management',
+      desc:
+        'Opens this phone\'s own background-app screen (brand-specific, e.g. "Allow background activity" / "Stop app when idle"). Turn both on for this app so this phone\'s own manager doesn\'t freeze the connection after the app is swiped away.',
+      granted: false,
+      statusText: 'Manual',
+      action: {
+        label: 'Open',
+        onPress: () => DeviceManagement.openBackgroundActivitySettings(),
+      },
+    });
+    rows.push({
+      key: 'overlay_keepalive',
+      icon: 'shield',
+      title: 'Background keep-alive (experimental)',
+      desc:
+        "Last-resort extra signal to stop this phone's power manager from freezing the agent when backgrounded. Not guaranteed to help — try the two rows above first.",
+      granted: !!overlayGranted,
+      statusText: overlayGranted === null ? 'Checking…' : overlayGranted ? 'Granted' : 'Not granted',
+      action: overlayGranted
+        ? undefined
+        : {
+            label: 'Allow',
+            onPress: async () => {
+              await DeviceManagement.requestOverlayPermission();
+              await refreshOverlay();
             },
           },
     });

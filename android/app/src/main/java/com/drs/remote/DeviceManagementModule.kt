@@ -1,5 +1,9 @@
 package com.drs.remote
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -323,11 +327,77 @@ class DeviceManagementModule(private val reactCtx: ReactApplicationContext) :
                 setClassName(reactCtx.packageName, reactCtx.packageName + ".MainActivity")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
-            reactCtx.startActivity(intent)
+            // This plain startActivity() call is what Android 10+'s background
+            // activity launch (BAL) restrictions were built to block: with no
+            // visible activity and no qualifying exemption, the OS can — and on
+            // this device's Android 16, reliably does — silently drop the start
+            // with no exception thrown, so the call "succeeds" here while nothing
+            // ever appears on screen. It still costs nothing to try first (works
+            // when the process already has some foreground standing), but
+            // postIncomingSessionNotification() below is the actual, OS-sanctioned
+            // way to interrupt whatever the device is doing from the background —
+            // the same mechanism incoming-call and alarm apps rely on.
+            try {
+                reactCtx.startActivity(intent)
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceManagement", "direct activity start failed: ${e.message}")
+            }
+            postIncomingSessionNotification()
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("launch_activity_failed", e)
         }
+    }
+
+    /**
+     * Posts a high-priority, full-screen-intent notification targeting
+     * MainActivity. Unlike a plain startActivity() from the background, this is
+     * the mechanism Android actually allows to bring an activity to the
+     * foreground unprompted (subject to the OS's own full-screen-intent trust
+     * heuristics — on devices/versions where it declines to go full-screen, this
+     * still surfaces a heads-up notification the operator-side device owner can
+     * tap, which beats nothing happening at all).
+     */
+    private fun postIncomingSessionNotification() {
+        val nm = reactCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                SESSION_CHANNEL,
+                "Remote session",
+                NotificationManager.IMPORTANCE_HIGH,
+            )
+            nm.createNotificationChannel(ch)
+        }
+        val intent = Intent().apply {
+            setClassName(reactCtx.packageName, reactCtx.packageName + ".MainActivity")
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            reactCtx,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        @Suppress("DEPRECATION")
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(reactCtx, SESSION_CHANNEL)
+        } else {
+            Notification.Builder(reactCtx)
+        }
+        val notification = builder
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("Remote session starting")
+            .setContentText("An operator is connecting to this device.")
+            .setCategory(Notification.CATEGORY_CALL)
+            .setFullScreenIntent(pendingIntent, true)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(SESSION_NOTIF_ID, notification)
     }
 
     /** Stops the background keep-alive service (e.g. on unenroll). */
@@ -394,6 +464,81 @@ class DeviceManagementModule(private val reactCtx: ReactApplicationContext) :
         }
     }
 
+    /**
+     * Opens the OS's per-app battery detail screen for this app
+     * (android.settings.VIEW_ADVANCED_POWER_USAGE_DETAIL). On this device's OEM
+     * skin (Transsion/XOS) this is also where the "Allow background activity" /
+     * "Stop app when idle" toggles live — the layer above the standard Doze/App
+     * Standby exemption that the OEM's own RMS background-process manager
+     * checks independently. There is no public API to set these toggles
+     * silently, even for a Device Owner: confirmed by inspecting the OEM's own
+     * settings/phonemanager/performance.rms system packages on this device,
+     * none of which expose a programmatic grant path. Falls back to the
+     * package's App Info screen if the detail action isn't handled.
+     */
+    @ReactMethod
+    fun openBackgroundActivitySettings(promise: Promise) {
+        try {
+            val pkg = reactCtx.packageName
+            val detail = Intent("android.settings.VIEW_ADVANCED_POWER_USAGE_DETAIL").apply {
+                data = android.net.Uri.parse("package:$pkg")
+                putExtra("package", pkg)
+                try {
+                    putExtra("uid", reactCtx.packageManager.getApplicationInfo(pkg, 0).uid)
+                } catch (e: Exception) { /* uid extra is best-effort */ }
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                reactCtx.startActivity(detail)
+                promise.resolve(true)
+                return
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceManagement", "advanced power usage detail failed: ${e.message}")
+            }
+            val appInfo = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = android.net.Uri.parse("package:$pkg")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactCtx.startActivity(appInfo)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("battery_detail_failed", e)
+        }
+    }
+
+    /**
+     * Whether the OS currently lets this app draw overlay windows
+     * (Settings.canDrawOverlays). See OverlayKeepAlive.kt: an experimental,
+     * last-resort background-persistence signal, not confirmed to work.
+     */
+    @ReactMethod
+    fun hasOverlayPermission(promise: Promise) {
+        promise.resolve(OverlayKeepAlive.isAvailable(reactCtx))
+    }
+
+    /**
+     * Opens the system "draw over other apps" grant screen for this app if
+     * not already allowed. One-time manual tap — there is no silent Device
+     * Owner grant for SYSTEM_ALERT_WINDOW.
+     */
+    @ReactMethod
+    fun requestOverlayPermission(promise: Promise) {
+        try {
+            if (OverlayKeepAlive.isAvailable(reactCtx)) {
+                promise.resolve(true)
+                return
+            }
+            val intent = Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:${reactCtx.packageName}"),
+            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+            reactCtx.startActivity(intent)
+            promise.resolve(false)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
+
     /** Enables/disables the camera for the whole device (device admin/owner). */
     @ReactMethod
     fun setCameraDisabled(disabled: Boolean, promise: Promise) {
@@ -407,5 +552,10 @@ class DeviceManagementModule(private val reactCtx: ReactApplicationContext) :
         } catch (e: Exception) {
             promise.reject("camera_policy_failed", e)
         }
+    }
+
+    companion object {
+        private const val SESSION_CHANNEL = "drs_incoming_session"
+        private const val SESSION_NOTIF_ID = 4202
     }
 }

@@ -123,18 +123,23 @@ export async function saveConfig(cfg: AppConfig): Promise<void> {
   await AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
 
+/**
+ * Throws on a genuine read failure (e.g. the Android Keystore key isn't
+ * accessible yet right after boot, before the device's first unlock) instead
+ * of swallowing it — a caller that treated any error the same as "nothing
+ * saved yet" would auto-re-enroll as a brand new device identity on every
+ * such hiccup, which is exactly what happened before this was split out:
+ * the same physical device kept reappearing in the portal under a different
+ * id. Only a real, successful "no credentials" result returns null.
+ */
 export async function loadIdentity(): Promise<Identity | null> {
-  try {
-    const creds = await Keychain.getGenericPassword({
-      service: IDENTITY_SERVICE,
-    });
-    if (!creds) {
-      return null;
-    }
-    return JSON.parse(creds.password) as Identity;
-  } catch {
+  const creds = await Keychain.getGenericPassword({
+    service: IDENTITY_SERVICE,
+  });
+  if (!creds) {
     return null;
   }
+  return JSON.parse(creds.password) as Identity;
 }
 
 export async function saveIdentity(id: Identity): Promise<void> {

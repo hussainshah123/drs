@@ -30,6 +30,9 @@ type DeviceManagementNative = {
   launchAgentActivity(): Promise<boolean>;
   isIgnoringBatteryOptimizations(): Promise<boolean>;
   requestIgnoreBatteryOptimizations(): Promise<boolean>;
+  openBackgroundActivitySettings(): Promise<boolean>;
+  hasOverlayPermission(): Promise<boolean>;
+  requestOverlayPermission(): Promise<boolean>;
 };
 
 export type ManagedPolicyResult = {
@@ -143,5 +146,30 @@ export const DeviceManagement = {
    */
   requestIgnoreBatteryOptimizations(): Promise<boolean> {
     return Native ? Native.requestIgnoreBatteryOptimizations() : Promise.resolve(false);
+  },
+  /**
+   * Opens the OS's per-app battery detail screen for this app. On OEM skins
+   * that layer their own background-process killer on top of stock Android
+   * (Transsion/XOS, and similarly Xiaomi/Oppo/Vivo/Huawei/Samsung), this is
+   * where the extra "allow background activity" toggle for THIS app lives —
+   * one manual tap, no silent/Device-Owner equivalent exists for it.
+   */
+  openBackgroundActivitySettings(): Promise<boolean> {
+    return Native ? Native.openBackgroundActivitySettings() : Promise.resolve(false);
+  },
+  /**
+   * Experimental last resort (see android/.../OverlayKeepAlive.kt): whether
+   * this app can currently draw overlay windows. The foreground service, the
+   * battery-optimization exemption and a continuously-held wake lock all
+   * failed to stop this device's OEM freezing the agent ~60s after it loses
+   * foreground focus; a visible-to-the-OS overlay window is the next signal
+   * to try, not a confirmed fix.
+   */
+  hasOverlayPermission(): Promise<boolean> {
+    return Native ? Native.hasOverlayPermission() : Promise.resolve(false);
+  },
+  /** Opens the system "draw over other apps" grant screen — one manual tap. */
+  requestOverlayPermission(): Promise<boolean> {
+    return Native ? Native.requestOverlayPermission() : Promise.resolve(false);
   },
 };

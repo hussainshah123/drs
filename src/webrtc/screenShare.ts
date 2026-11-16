@@ -139,8 +139,19 @@ export class ScreenShare {
     const wasActive = this.stream != null;
     if (this.stream) {
       this.stream.getTracks().forEach((t: MediaStreamTrack) => {
+        // stop() alone is not enough on Android: react-native-webrtc's
+        // MediaStreamTrack.stop() only disables the track in JS — it never
+        // calls native dispose, so the capturer (and its MediaProjection
+        // foreground-service notification, the system-level screen-recording
+        // "casting" icon) is left running indefinitely with nobody watching.
+        // release() is the call that actually reaches
+        // GetUserMediaImpl.disposeTrack() -> ScreenCaptureController.dispose()
+        // -> MediaProjectionService.abort(), which is what stops it.
         try {
           t.stop();
+        } catch {}
+        try {
+          (t as any).release?.();
         } catch {}
       });
       this.stream = null;

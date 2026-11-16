@@ -3,7 +3,7 @@
   smaller node (the operator) — "every device, one point of control" as a
   simple glyph, in the app's orange/black theme.
 -->
-<vector xmlns:android="http://schemas.android.com/apis/res/android"
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="160dp"
     android:height="160dp"
     android:viewportWidth="108"

@@ -4,10 +4,22 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets an incoming remote session bring the app to the foreground from
+         the background (a plain startActivity() call there is silently
+         blocked by Android 10+'s background-activity-launch restrictions) —
+         see DeviceManagementModule.postIncomingSessionNotification(). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Lets the app ask (one-time system dialog) to be exempted from Doze/App
          Standby battery optimization, so the background connection survives
          idle periods instead of being throttled. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Lets AgentService's keep-alive alarm (KeepAliveReceiver) use exact,
+         Doze-surviving timing. Device Owner apps hold this automatically; the
+         service falls back to the inexact variant if it is ever denied. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Experimental keep-alive overlay (see OverlayKeepAlive.kt): a one-time
+         manual grant, no silent Device Owner equivalent exists for it. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Foreground services and screen capture -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -91,6 +103,12 @@
             </intent-filter>
 
         </receiver>
+
+        <!-- AlarmManager wake target for AgentService's keep-alive (see
+             KeepAliveReceiver/AgentService.scheduleKeepAlive). -->
+        <receiver
+            android:name=".remote.KeepAliveReceiver"
+            android:exported="false" />
 
         <!-- Accessibility service -->
         <service

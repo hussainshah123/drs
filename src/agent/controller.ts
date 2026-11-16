@@ -176,6 +176,13 @@ export class AgentController {
   private signal: SignalClient;
   private screen = new ScreenShare();
   private screenHeld = false;
+  // True only while the owner explicitly holds sharing on via startSharing()
+  // (the Permissions tab's Start/Stop button) — as opposed to screenHeld
+  // being set by the auto-answer path below to bridge one session's capture
+  // to the next. closePeer() uses this to tell the two apart: it must never
+  // drop the owner's explicit hold, but it must drop the automatic one once
+  // every viewer of that session is gone (see closePeer).
+  private screenHeldByUser = false;
   private streamingWakeLock = false;
   private peers = new Map<number, Peer>();
   private perms = new Map<number, number>(); // participantId -> permission bitmask
@@ -267,6 +274,7 @@ export class AgentController {
     this.screen.onStopped = () => {
       if (this.screenHeld || this.state.sharing || this.state.screenActive) {
         this.screenHeld = false;
+        this.screenHeldByUser = false;
         this.patch({
           sharing: false,
           screenActive: false,
@@ -341,6 +349,7 @@ export class AgentController {
       );
       await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale); // held reference; not released until stopSharing
       this.screenHeld = true;
+      this.screenHeldByUser = true;
       this.patch({
         sharing: true,
         screenActive: this.screen.active,
@@ -366,6 +375,7 @@ export class AgentController {
     if (this.screenHeld) {
       this.screen.release();
       this.screenHeld = false;
+      this.screenHeldByUser = false;
       log.info('ctrl', 'screen sharing stopped');
       this.patch({
         sharing: false,
@@ -382,6 +392,7 @@ export class AgentController {
     if (!this.screenHeld) {
       await this.screen.acquire(this.config.captureFps, this.config.captureResolutionScale);
       this.screenHeld = true;
+      this.screenHeldByUser = true;
     }
     this.screen.setPaused(true);
     await this.setPeersScreenPaused(true);
@@ -429,6 +440,7 @@ export class AgentController {
       this.closePeer(pid);
     }
     this.screenHeld = false;
+    this.screenHeldByUser = false;
     while (this.screen.active) {
       this.screen.release();
     }
@@ -1225,6 +1237,18 @@ export class AgentController {
     if (this.capturePids.delete(pid)) {
       this.screen.release();
     }
+    // The auto-answer path (see the autoShareScreen branch above) takes one
+    // extra reference per session so a same-session reconnect can reuse the
+    // capture without re-prompting — on Android 14+ the OS forces a fresh
+    // prompt per session regardless, so that reference ends up never
+    // released and the system's screen-recording indicator stays up forever
+    // with nobody watching. Drop it once this session's last viewer is gone,
+    // unless the owner explicitly holds sharing on (startSharing/pauseSharing).
+    if (this.peers.size === 0 && this.screenHeld && !this.screenHeldByUser) {
+      this.screen.release();
+      this.screenHeld = false;
+      this.patch({ sharing: false, screenActive: this.screen.active, screenPaused: this.screen.paused });
+    }
     this.connected.delete(pid);
     forgetInput(pid);
     this.patch({
@@ -1250,6 +1274,7 @@ export class AgentController {
     this.setStreamingActive(false);
     // Fully release the screen, including any held sharing reference.
     this.screenHeld = false;
+    this.screenHeldByUser = false;
     while (this.screen.active) {
       this.screen.release();
     }

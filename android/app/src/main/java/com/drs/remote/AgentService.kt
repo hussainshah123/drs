@@ -1,8 +1,10 @@
 package com.drs.remote
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -12,6 +14,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import com.drs.MainApplication
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -39,6 +42,17 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
  * Looper is not tied to screen/display state the way JS's timer path was, so
  * it emits a tick event to JS on its own schedule; JS responds by sending a
  * heartbeat immediately, on top of (not instead of) its own interval.
+ *
+ * Confirmed separately on this device's OEM skin (Transsion/XOS — its
+ * ProcessRecord carries Transsion-only fields like mNeedLimitVisAdjForTranpm,
+ * i.e. its own power-management hooks grafted into the framework): roughly 60
+ * seconds after this app loses foreground focus, the WHOLE process stops
+ * being scheduled — not just JS's timers but this service's own Handler loop
+ * too, since both need the CPU to actually run. An active foreground service
+ * does not prevent it. The one wake channel that survives is AlarmManager:
+ * its alarms are delivered by system_server, which unfreezes/schedules this
+ * process to hand off the broadcast regardless of the OEM's own freeze — see
+ * KeepAliveReceiver and scheduleKeepAlive below.
  */
 class AgentService : Service() {
     private val heartbeatHandler = Handler(Looper.getMainLooper())
@@ -55,8 +69,31 @@ class AgentService : Service() {
         if (streamingActive) {
             setStreamingWakeLock(this, true)
         }
+        acquireAgentWakeLock(this)
+        OverlayKeepAlive.start(this)
+        startReactHostHeadless()
         startHeartbeatTicker()
+        scheduleKeepAlive(this)
         return START_STICKY
+    }
+
+    /**
+     * Starts the RN JS engine itself if nothing has yet (no Activity has run
+     * in this process). Confirmed on-device: when KeepAliveReceiver's alarm
+     * resurrects a killed process via AgentService.start(), the Service comes
+     * up fine (wake lock, overlay, this alarm all re-arm) but MainApplication
+     * only lazily constructs the ReactHost object — it never actually starts
+     * the JS instance without an Activity, so the gateway connection (which
+     * lives in JS) never comes back even though the native process is alive.
+     * ReactHost.start() is idempotent/safe to call again if an Activity has
+     * already started it.
+     */
+    private fun startReactHostHeadless() {
+        try {
+            (application as? MainApplication)?.reactHost?.start()
+        } catch (e: Exception) {
+            Log.w("AgentService", "headless ReactHost start failed: ${e.message}")
+        }
     }
 
     // Swiping the app from recents must not stop the agent: keep running.
@@ -66,7 +103,10 @@ class AgentService : Service() {
 
     override fun onDestroy() {
         stopHeartbeatTicker()
+        cancelKeepAlive(this)
         setStreamingWakeLock(this, false)
+        releaseAgentWakeLock()
+        OverlayKeepAlive.stop(this)
         super.onDestroy()
     }
 
@@ -97,14 +137,7 @@ class AgentService : Service() {
      * again on the next tick.
      */
     private fun emitHeartbeatTick() {
-        try {
-            val reactContext = (application as? MainApplication)?.reactHost?.currentReactContext
-            reactContext
-                ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                ?.emit(HEARTBEAT_EVENT, null)
-        } catch (e: Exception) {
-            Log.w("AgentService", "heartbeat tick emit failed: ${e.message}")
-        }
+        emitHeartbeatTick(this)
     }
 
     private fun notification(): Notification {
@@ -131,13 +164,33 @@ class AgentService : Service() {
         private const val CHANNEL = "drs_agent"
         private const val NOTIF_ID = 4201
         private const val WAKE_LOCK_TAG = "drs:screen-stream"
+        private const val AGENT_WAKE_LOCK_TAG = "drs:agent-alive"
         /** JS event name the heartbeat ticker emits; must match client.ts. */
         const val HEARTBEAT_EVENT = "drs_heartbeat_tick"
         /** Well inside the gateway's 3-interval (90s @ 30s) presence timeout. */
         private const val HEARTBEAT_TICK_MS = 20_000L
+        /**
+         * Comfortably under the ~60s this device's OEM power management takes to
+         * freeze a backgrounded process (see the class doc comment) and still
+         * well inside the gateway's 90s presence timeout.
+         */
+        const val KEEPALIVE_INTERVAL_MS = 45_000L
         @Volatile private var streamingActive = false
         private val wakeLockGuard = Any()
         private var streamingWakeLock: PowerManager.WakeLock? = null
+        private var agentWakeLock: PowerManager.WakeLock? = null
+
+        /** Shared by the Handler-driven ticker and KeepAliveReceiver's alarm tick. */
+        fun emitHeartbeatTick(ctx: Context) {
+            try {
+                val reactContext = (ctx.applicationContext as? MainApplication)?.reactHost?.currentReactContext
+                reactContext
+                    ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    ?.emit(HEARTBEAT_EVENT, null)
+            } catch (e: Exception) {
+                Log.w("AgentService", "heartbeat tick emit failed: ${e.message}")
+            }
+        }
 
         fun start(ctx: Context) {
             val i = Intent(ctx, AgentService::class.java)
@@ -148,6 +201,43 @@ class AgentService : Service() {
             }
         }
 
+        /**
+         * (Re-)arms the one-shot alarm KeepAliveReceiver rearms on every fire, so
+         * the cycle repeats as long as the agent is meant to be running.
+         * setExactAndAllowWhileIdle survives Doze; it needs SCHEDULE_EXACT_ALARM
+         * on Android 12+, which Device Owner apps hold automatically, but a
+         * non-owner install could have it revoked, so this falls back to the
+         * inexact (still idle-allowed) variant rather than losing the wake-up
+         * entirely.
+         */
+        fun scheduleKeepAlive(ctx: Context) {
+            val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val pi = keepAlivePendingIntent(ctx)
+            val triggerAt = SystemClock.elapsedRealtime() + KEEPALIVE_INTERVAL_MS
+            try {
+                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi)
+                Log.i("AgentService", "keep-alive alarm armed (exact), in ${KEEPALIVE_INTERVAL_MS}ms")
+            } catch (e: SecurityException) {
+                am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi)
+                Log.w("AgentService", "keep-alive alarm armed (inexact fallback): ${e.message}")
+            } catch (e: Exception) {
+                Log.e("AgentService", "keep-alive alarm scheduling failed: ${e.message}", e)
+            }
+        }
+
+        fun cancelKeepAlive(ctx: Context) {
+            val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            am.cancel(keepAlivePendingIntent(ctx))
+        }
+
+        private fun keepAlivePendingIntent(ctx: Context): PendingIntent {
+            val intent = Intent(ctx, KeepAliveReceiver::class.java)
+            return PendingIntent.getBroadcast(
+                ctx, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
         fun setStreamingActive(ctx: Context, active: Boolean) {
             streamingActive = active
             setStreamingWakeLock(ctx.applicationContext, active)
@@ -156,7 +246,41 @@ class AgentService : Service() {
         fun stop(ctx: Context) {
             streamingActive = false
             setStreamingWakeLock(ctx.applicationContext, false)
+            cancelKeepAlive(ctx)
             ctx.stopService(Intent(ctx, AgentService::class.java))
+        }
+
+        /**
+         * Held for the agent's whole lifetime, not just during an active stream.
+         * A plain foreground service plus this device's own battery-optimization
+         * exemption and app-standby allowlisting were not enough to stop this
+         * OEM freezing the process ~60s after it loses foreground focus (see the
+         * class doc comment) — a continuously-held wake lock is the one other
+         * standard, widely-respected Android signal left untried.
+         */
+        private fun acquireAgentWakeLock(ctx: Context) {
+            synchronized(wakeLockGuard) {
+                if (agentWakeLock?.isHeld == true) {
+                    return
+                }
+                val powerManager = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                agentWakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    AGENT_WAKE_LOCK_TAG,
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+                Log.i("AgentService", "agent wake lock acquired")
+            }
+        }
+
+        private fun releaseAgentWakeLock() {
+            synchronized(wakeLockGuard) {
+                agentWakeLock?.let { if (it.isHeld) it.release() }
+                agentWakeLock = null
+                Log.i("AgentService", "agent wake lock released")
+            }
         }
 
         private fun setStreamingWakeLock(ctx: Context, enabled: Boolean) {
