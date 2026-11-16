@@ -4,8 +4,9 @@
  * URL is editable so the same build points at any backend.
  */
 import React, {useEffect, useRef, useState} from 'react';
-import {Alert, Platform, ScrollView, StyleSheet, Text, View} from 'react-native';
-import {Button, Card, Field, H1, Label, Logo, P} from '../ui/components';
+import {Alert, Animated, Easing, Platform, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Button, Card, H1, Label, Logo, P} from '../ui/components';
+import {CodeInput, type CodeInputHandle} from '../ui/CodeInput';
 import {T} from '../ui/theme';
 import {enrollDevice} from '../core/enroll';
 import {
@@ -24,16 +25,27 @@ export function EnrollScreen({
   onConfigChange: (c: AppConfig) => void;
   onEnrolled: (id: Identity) => void;
 }) {
-  const [apiUrl, setApiUrl] = useState(config.apiBaseUrl);
-  // Android ships with a pre-provisioned token so the agent enrolls itself.
-  const [token, setToken] = useState(
-    Platform.OS === 'android' ? DEFAULT_ENROLLMENT_TOKEN : '',
-  );
+  const [apiUrl] = useState(config.apiBaseUrl);
+  // The device owner types the 6-digit code shown in the Command Center
+  // portal here. Android also ships with a pre-provisioned long-form token
+  // for silent auto-enrollment (below) — unrelated to what's typed on screen.
+  const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const codeInputRef = useRef<CodeInputHandle>(null);
+  const cardAnim = useRef(new Animated.Value(0)).current;
 
-  const enroll = async (tok: string = token) => {
+  useEffect(() => {
+    Animated.timing(cardAnim, {
+      toValue: 1,
+      duration: 480,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [cardAnim]);
+
+  const enroll = async (tok: string) => {
     if (!tok.trim()) {
-      Alert.alert('Enrollment token required', 'Paste the token from the portal.');
+      Alert.alert('Enrollment code required', 'Enter the 6-digit code shown in the Command Center.');
       return;
     }
     setBusy(true);
@@ -45,6 +57,8 @@ export function EnrollScreen({
       onEnrolled(id);
     } catch (e: any) {
       Alert.alert('Enrollment failed', e?.message || String(e));
+      setCode('');
+      codeInputRef.current?.shake();
     } finally {
       setBusy(false);
     }
@@ -83,17 +97,32 @@ export function EnrollScreen({
         <Text style={styles.hint}>Use 10.0.2.2 for the host machine from an Android emulator.</Text>
       </Card> */}
 
-      <Card>
-        <Label>Enrollment token</Label>
-        <Field
-          label="TOKEN"
-          value={token}
-          onChangeText={setToken}
-          placeholder="paste the token from the portal"
-          multiline
-        />
-        <Button title="Enroll device" onPress={() => enroll()} loading={busy} />
-      </Card>
+      <Animated.View
+        style={{
+          opacity: cardAnim,
+          transform: [{translateY: cardAnim.interpolate({inputRange: [0, 1], outputRange: [18, 0]})}],
+        }}>
+        <Card style={styles.codeCard}>
+          <Label>Enrollment code</Label>
+          <P dim>Enter the 6-digit code shown for this device in the Command Center.</P>
+          <View style={styles.codeWrap}>
+            <CodeInput
+              ref={codeInputRef}
+              value={code}
+              onChangeText={setCode}
+              onComplete={v => enroll(v)}
+              autoFocus={Platform.OS === 'ios'}
+              editable={!busy}
+            />
+          </View>
+          <Button
+            title={busy ? 'Enrolling…' : 'Enroll device'}
+            onPress={() => enroll(code)}
+            loading={busy}
+            disabled={code.length < 6}
+          />
+        </Card>
+      </Animated.View>
 
       <P dim>
         A fresh Ed25519 identity is generated on this device. The private key never
@@ -108,4 +137,6 @@ const styles = StyleSheet.create({
   content: {padding: T.space, paddingBottom: 48},
   hero: {alignItems: 'center', marginTop: 24, marginBottom: 24, gap: 10},
   hint: {color: T.textDim, fontSize: 13, lineHeight: 19},
+  codeCard: {alignItems: 'stretch'},
+  codeWrap: {marginTop: 18, marginBottom: 6},
 });
