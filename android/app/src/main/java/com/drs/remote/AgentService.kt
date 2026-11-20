@@ -167,8 +167,19 @@ class AgentService : Service() {
         private const val AGENT_WAKE_LOCK_TAG = "drs:agent-alive"
         /** JS event name the heartbeat ticker emits; must match client.ts. */
         const val HEARTBEAT_EVENT = "drs_heartbeat_tick"
-        /** Well inside the gateway's 3-interval (90s @ 30s) presence timeout. */
-        private const val HEARTBEAT_TICK_MS = 20_000L
+        /**
+         * Well inside the gateway's 3-interval (90s @ 30s) presence timeout, but
+         * also — since AgentController's drs_heartbeat_tick listener piggybacks
+         * a StreamStats ping for every live peer on this same tick (see
+         * Peer.pingStats) — well under the viewer's own 7s agent-silence
+         * tolerance (AGENT_SILENT_MS in web/lib/remote/session.ts). 20s was fine
+         * for the gateway heartbeat alone but left a live session's "temporarily
+         * unavailable" overlay flapping on and off every time this was the only
+         * thing keeping it alive (confirmed on-device: a plain JS setInterval,
+         * like the adaptive-quality timer, stops firing once this OEM freezes
+         * the app in the background or kills it from recents during a session).
+         */
+        private const val HEARTBEAT_TICK_MS = 5_000L
         /**
          * Comfortably under the ~60s this device's OEM power management takes to
          * freeze a backgrounded process (see the class doc comment) and still

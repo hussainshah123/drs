@@ -17,6 +17,7 @@
  *
  * UI observes state via subscribe(); it never talks to the gateway directly.
  */
+import { DeviceEventEmitter } from 'react-native';
 import { Api, ApiError, type ApiMessage } from '../core/api';
 import { log } from '../core/log';
 import { makeTokenProvider, type DeviceToken } from '../core/token';
@@ -184,6 +185,9 @@ export class AgentController {
   // every viewer of that session is gone (see closePeer).
   private screenHeldByUser = false;
   private streamingWakeLock = false;
+  /** Must match AgentService.HEARTBEAT_EVENT (android/.../remote/AgentService.kt). */
+  private static readonly HEARTBEAT_TICK_EVENT = 'drs_heartbeat_tick';
+  private heartbeatTickSub: {remove: () => void} | null = null;
   private peers = new Map<number, Peer>();
   private perms = new Map<number, number>(); // participantId -> permission bitmask
   private names = new Map<number, string>();
@@ -268,6 +272,21 @@ export class AgentController {
 
     this.signal = new SignalClient(tokenProvider, agentInfo, events);
 
+    // Rides the same native-driven tick the heartbeat uses (see
+    // AgentService.kt / signal/client.ts) instead of a plain JS timer: this
+    // device's OEM freezes a plain setInterval once the app is backgrounded
+    // or killed from recents during a live session — exactly when a viewer
+    // stuck on "temporarily unavailable" after a brief ICE blip most needs a
+    // fresh liveness message to recover (see Peer.pingStats).
+    this.heartbeatTickSub = DeviceEventEmitter.addListener(
+      AgentController.HEARTBEAT_TICK_EVENT,
+      () => {
+        for (const peer of this.peers.values()) {
+          void peer.pingStats();
+        }
+      },
+    );
+
     // When capture fully stops (last viewer left, or the system ended it), drop
     // the persistent hold so the next session re-establishes it (and, if the OS
     // interrupted it, re-prompts once) instead of silently staying off.
@@ -297,6 +316,8 @@ export class AgentController {
 
   stop(): void {
     log.info('ctrl', 'stopping agent');
+    this.heartbeatTickSub?.remove();
+    this.heartbeatTickSub = null;
     this.signal.stop();
     this.teardownAll();
   }

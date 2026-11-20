@@ -280,6 +280,78 @@ export class Peer {
   }
 
   /**
+   * Sends a StreamStats message on drs.session every adaptive-quality tick
+   * (~2.5s). The viewer's liveness check (web/lib/remote/session.ts) only
+   * trusts an *application-level* message from the agent, not bare ICE
+   * transport state, to decide the agent is genuinely alive — deliberately,
+   * since a reconnected transport proves nothing about whether the app
+   * itself is still responsive (see this device's own OEM-freeze history).
+   * Without something to send periodically, a brief ICE "disconnected" blip
+   * that heals in milliseconds still flips the viewer to "temporarily
+   * unavailable" and then never recovers, because nothing ever arrives to
+   * prove the agent is back — even though the video itself kept flowing the
+   * whole time. This is the missing proactive signal; AgentHello alone (sent
+   * once, at connect) was never enough.
+   */
+  private sendStats(framesPerSecond?: number, bytesSent?: number, timestamp?: number): void {
+    let bitrateKbps = 0;
+    if (typeof bytesSent === 'number' && typeof timestamp === 'number' && this.lastStatsAt > 0) {
+      const deltaBytes = bytesSent - this.lastStatsBytes;
+      const deltaMs = timestamp - this.lastStatsAt;
+      if (deltaMs > 0 && deltaBytes >= 0) {
+        bitrateKbps = Math.round((deltaBytes * 8) / deltaMs);
+      }
+    }
+    if (typeof bytesSent === 'number' && typeof timestamp === 'number') {
+      this.lastStatsBytes = bytesSent;
+      this.lastStatsAt = timestamp;
+    }
+    this.sendSession({
+      seq: ++this.seq,
+      stats: {
+        fps: Math.round(framesPerSecond || 0),
+        bitrate_kbps: bitrateKbps,
+        capture_us: 0,
+        encode_us: 0,
+        encoder: this.usingH264 ? 'h264' : 'vp8',
+      },
+    });
+  }
+
+  /**
+   * Independent of the adaptive-quality timer above: confirmed on-device,
+   * this device's OEM freezes a plain JS setInterval (like adaptiveTimer)
+   * once the app is backgrounded/killed-from-recents during a live session —
+   * the exact scenario where the viewer most needs a liveness message, since
+   * that's also when a brief ICE blip is least likely to self-heal with
+   * nobody looking at the phone. AgentController calls this on every
+   * drs_heartbeat_tick (see AgentService.kt / signal/client.ts), which is
+   * driven by a native AlarmManager/Handler tick, not a JS timer, and is
+   * already proven to keep firing through that freeze.
+   */
+  async pingStats(): Promise<void> {
+    if (this.closed || !this.screenSender?.getParameters) {
+      return;
+    }
+    try {
+      const stats = await this.pc.getStats();
+      let framesPerSecond: number | undefined;
+      let bytesSent: number | undefined;
+      let statsTimestamp: number | undefined;
+      stats.forEach((s: any) => {
+        if (s.type === 'outbound-rtp' && (s.kind === 'video' || s.mediaType === 'video')) {
+          framesPerSecond = s.framesPerSecond;
+          bytesSent = s.bytesSent;
+          statsTimestamp = s.timestamp;
+        }
+      });
+      this.sendStats(framesPerSecond, bytesSent, statsTimestamp);
+    } catch (e: any) {
+      log.warn('peer', `liveness stats ping failed: ${e?.message || e}`);
+    }
+  }
+
+  /**
    * addScreen attaches the screen track to the connection. Call it AFTER
    * setRemoteDescription so we can bind the track to the operator's recvonly
    * video transceiver via replaceTrack (reliable in react-native-webrtc) and
@@ -447,10 +519,16 @@ export class Peer {
       let roundTripTime: number | undefined;
       let jitter: number | undefined;
       let framesEncoded: number | undefined;
+      let framesPerSecond: number | undefined;
+      let bytesSent: number | undefined;
+      let statsTimestamp: number | undefined;
       stats.forEach((s: any) => {
         if (s.type === 'outbound-rtp' && (s.kind === 'video' || s.mediaType === 'video')) {
           reason = s.qualityLimitationReason;
           framesEncoded = s.framesEncoded;
+          framesPerSecond = s.framesPerSecond;
+          bytesSent = s.bytesSent;
+          statsTimestamp = s.timestamp;
         }
         // RTCP receiver reports surface here (sender-side view of what the
         // viewer is actually seeing) — a second, independent signal in case
@@ -513,6 +591,7 @@ export class Peer {
           await this.applyAdaptiveScale('recovered');
         }
       }
+      this.sendStats(framesPerSecond, bytesSent, statsTimestamp);
     } catch (e: any) {
       log.warn('peer', `adaptive quality tick failed: ${e?.message || e}`);
     }
@@ -602,6 +681,11 @@ export class Peer {
   private static h264RuntimeFailed = false;
   private usingH264 = false;
   private zeroFrameTicks = 0;
+  // Previous outbound-rtp sample, to turn the adaptive tick's getStats() call
+  // (already running every ADAPTIVE_INTERVAL_MS) into a bitrate delta for the
+  // periodic StreamStats message below, with no extra polling.
+  private lastStatsBytes = 0;
+  private lastStatsAt = 0;
 
   /**
    * Decides VP8 vs hardware H.264 for THIS connection, per-device: queries
